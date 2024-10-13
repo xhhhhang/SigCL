@@ -14,7 +14,7 @@ from torchvision import datasets, transforms
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 from losses import SupConLoss
-from networks.resnet_big import SigCLResNet, SupConResNet
+from networks.resnet_big import SigCLPNResNet, SigCLResNet, SupConResNet
 from util import (
     AverageMeter,
     TwoCropTransform,
@@ -30,7 +30,7 @@ try:
 except ImportError:
     pass
 
-from src.models.loss import SigCLoss
+from src.models.loss import SigCLossNegHard, SigCLossNegWeight, SigCLossPN
 
 
 def parse_option():
@@ -75,7 +75,7 @@ def parse_option():
         "--method",
         type=str,
         default="SupCon",
-        choices=["SupCon", "SimCLR", "SigCL"],
+        choices=["SupCon", "SimCLR", "SigCL", "SigCLPN", "SigCLNegHard"],
         help="choose method",
     )
 
@@ -94,6 +94,10 @@ def parse_option():
         action="store_true",
         help="use SigCL loss instead of default contrastive loss",
     )
+    parser.add_argument(
+        "--neg_weight_step", type=float, default=1.02, help="step size for negative weight"
+    )
+    parser.add_argument("--max_neg_weight", type=int, default=16, help="maximum negative weight")
 
     opt = parser.parse_args()
 
@@ -213,9 +217,19 @@ def set_model(opt):
     if opt.method == "SupCon":
         model = SupConResNet(name=opt.model)
         criterion = SupConLoss(temperature=opt.temp)
+    elif opt.method == "SigCLPN":
+        model = SigCLPNResNet(name=opt.model)
+        criterion = SigCLossPN()
     elif opt.method == "SigCL":
         model = SigCLResNet(name=opt.model)
-        criterion = SigCLoss(mask_diagonal=True)
+        criterion = SigCLossNegWeight(
+            max_neg_weight=opt.max_neg_weight, neg_weight_step=opt.neg_weight_step
+        )
+    elif opt.method == "SigCLNegHard":
+        model = SigCLResNet(name=opt.model)
+        criterion = SigCLossNegHard(
+            min_neg_samples=opt.batch_size, neg_weight_step=opt.neg_weight_step
+        )
 
     # enable synchronized Batch Normalization
     if opt.syncBN:
@@ -253,8 +267,13 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
-        if opt.method == "SigCL":
-            features, logit_scale, logit_bias = model(images)
+        if opt.method == "SigCL" or opt.method == "SigCLNegHard":
+            model_out = model(images)
+
+            features = model_out["features"]
+            logit_scale = model_out["logit_scale"]
+            logit_bias = model_out["logit_bias"]
+
             labels = labels.repeat(2)  # Repeat labels to match the dimension [2*bsz]
             loss = criterion(
                 first_features=features,
@@ -263,6 +282,22 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
                 second_label=labels,
                 logit_scale=logit_scale,
                 logit_bias=logit_bias,
+                mask_diagonal=True,
+            )
+            criterion.step_neg_weight()
+        elif opt.method == "SigCLPN":
+            model_out = model(images)
+            labels = labels.repeat(2)
+            loss = criterion(
+                first_features=model_out["features"],
+                second_features=model_out["features"],
+                first_label=labels,
+                second_label=labels,
+                pos_logit_scale=model_out["pos_logit_scale"],
+                neg_logit_scale=model_out["neg_logit_scale"],
+                pos_logit_bias=model_out["pos_logit_bias"],
+                neg_logit_bias=model_out["neg_logit_bias"],
+                mask_diagonal=True,
             )
         else:
             features = model(images)
@@ -289,19 +324,42 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 
         # print info
         if (idx + 1) % opt.print_freq == 0:
-            print(
-                "Train: [{0}][{1}/{2}]\t"
-                "BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
-                "DT {data_time.val:.3f} ({data_time.avg:.3f})\t"
-                "loss {loss.val:.8f} ({loss.avg:.8f})".format(
-                    epoch,
-                    idx + 1,
-                    len(train_loader),
-                    batch_time=batch_time,
-                    data_time=data_time,
-                    loss=losses,
+            if opt.method == "SigCLPN":
+                print(
+                    f"pos_logit_scale: {model_out['pos_logit_scale'].item()}, neg_logit_scale: {model_out['neg_logit_scale'].item()}"
                 )
-            )
+            if opt.method == "SigCL" or opt.method == "SigCLNegHard":
+                print(
+                    "Train: [{0}][{1}/{2}]\t"
+                    # "BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
+                    # "DT {data_time.val:.3f} ({data_time.avg:.3f})\t"
+                    "neg_weight {neg_weight:.5f}\t"
+                    "logit_scale {logit_scale:.3f}\t"
+                    "logit_bias {logit_bias:.3f}\t"
+                    "loss {loss.val:.5f} ({loss.avg:.5f})".format(
+                        epoch,
+                        idx + 1,
+                        len(train_loader),
+                        neg_weight=criterion.neg_weight,
+                        logit_scale=logit_scale.item(),
+                        logit_bias=logit_bias.item(),
+                        loss=losses,
+                    )
+                )
+            else:
+                print(
+                    "Train: [{0}][{1}/{2}]\t"
+                    "BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
+                    "DT {data_time.val:.3f} ({data_time.avg:.3f})\t"
+                    "loss {loss.val:.5f} ({loss.avg:.5f})".format(
+                        epoch,
+                        idx + 1,
+                        len(train_loader),
+                        batch_time=batch_time,
+                        data_time=data_time,
+                        loss=losses,
+                    )
+                )
             sys.stdout.flush()
 
     return losses.avg

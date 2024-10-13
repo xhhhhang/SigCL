@@ -1,9 +1,16 @@
+import math
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from open_clip.loss import (
+    neighbour_exchange_bidir_with_grad,
+    neighbour_exchange_with_grad,
+)
 
-class SigCLoss(nn.Module):
+
+class SigCLossBase(nn.Module):
     def __init__(
         self,
         cache_labels=False,
@@ -11,7 +18,6 @@ class SigCLoss(nn.Module):
         world_size=1,
         bidir=True,
         use_horovod=False,
-        mask_diagonal=False,
     ):
         super().__init__()
         self.cache_labels = cache_labels
@@ -19,7 +25,6 @@ class SigCLoss(nn.Module):
         self.world_size = world_size
         self.use_horovod = use_horovod
         self.bidir = bidir
-        self.mask_diagonal = mask_diagonal
 
         # cache state
         self.prev_num_logits = 0
@@ -45,6 +50,7 @@ class SigCLoss(nn.Module):
         second_label,
         logit_scale,
         logit_bias=None,
+        mask_diagonal=False,
     ):
         logits = self.get_logits(first_features, second_features, logit_scale, logit_bias)
         labels = self.get_ground_truth(
@@ -54,40 +60,9 @@ class SigCLoss(nn.Module):
             second_label,
         )
         loss_matrix = -F.logsigmoid(labels * logits)
-        if self.mask_diagonal:
+        if mask_diagonal:
             loss_matrix.fill_diagonal_(0)
         loss = loss_matrix.sum() / first_features.shape[0]
-        return loss
-
-    def _loss_v2(
-        self,
-        first_features,
-        second_features,
-        first_label,
-        second_label,
-        logit_scale,
-        logit_bias=None,
-    ):
-        logits = self.get_logits(first_features, second_features, logit_scale, logit_bias)
-        labels = self.get_ground_truth(
-            first_features.device,
-            first_features.dtype,
-            first_label,
-            second_label,
-        )
-        loss_matrix = -F.logsigmoid(labels * logits)
-        if self.mask_diagonal:
-            loss_matrix.fill_diagonal_(0)
-
-        pos_mask = labels == 1
-        neg_mask = labels == -1
-        num_pos = pos_mask.sum().clamp(min=1)
-        num_neg = neg_mask.sum().clamp(min=1)
-
-        pos_loss = (loss_matrix * pos_mask).sum() / num_pos
-        neg_loss = (loss_matrix * neg_mask).sum() / num_neg * (first_features.shape[0] - 1)
-
-        loss = pos_loss + neg_loss
         return loss
 
     def forward(
@@ -96,84 +71,236 @@ class SigCLoss(nn.Module):
         second_features,
         first_label,
         second_label,
-        logit_scale,
-        logit_bias,
+        mask_diagonal=False,
         output_dict=False,
+        **kwargs,
     ):
-        loss = self._loss_v2(
-            first_features, second_features, first_label, second_label, logit_scale, logit_bias
+        loss = self._loss(
+            first_features,
+            second_features,
+            first_label,
+            second_label,
+            mask_diagonal=mask_diagonal,
+            **kwargs,
         )
+
+        if self.world_size > 1:
+            # exchange text features w/ neighbour world_size - 1 times
+            right_rank = (self.rank + 1) % self.world_size
+            left_rank = (self.rank - 1 + self.world_size) % self.world_size
+            if self.bidir:
+                second_features_to_right = second_features_to_left = second_features
+                second_label_to_right = second_label_to_left = second_label
+                num_bidir, remainder = divmod(self.world_size - 1, 2)
+                for i in range(num_bidir):
+                    second_features_recv = neighbour_exchange_bidir_with_grad(
+                        left_rank,
+                        right_rank,
+                        second_features_to_left,
+                        second_features_to_right,
+                    )
+                    second_label_recv = neighbour_exchange_bidir_with_grad(
+                        left_rank,
+                        right_rank,
+                        second_label_to_left,
+                        second_label_to_right,
+                    )
+
+                    for f_recv, l_recv in zip(second_features_recv, second_label_recv):
+                        loss += self._loss(
+                            first_features,
+                            f_recv,
+                            first_label,
+                            l_recv,
+                            mask_diagonal=mask_diagonal,
+                            **kwargs,
+                        )
+                    second_features_to_left, second_features_to_right = second_features_recv
+                    second_label_to_left, second_label_to_right = second_label_recv
+
+                if remainder:
+                    second_features_recv = neighbour_exchange_with_grad(
+                        left_rank, right_rank, second_features_to_right
+                    )
+                    second_label_recv = neighbour_exchange_with_grad(
+                        left_rank, right_rank, second_label_to_right
+                    )
+
+                    loss += self._loss(
+                        first_features,
+                        second_features_recv,
+                        first_label,
+                        second_label_recv,
+                        mask_diagonal=mask_diagonal,
+                        **kwargs,
+                    )
+            else:
+                second_features_to_right = second_features
+                second_label_to_right = second_label
+                for i in range(self.world_size - 1):
+                    second_features_from_left = neighbour_exchange_with_grad(
+                        left_rank, right_rank, second_features_to_right
+                    )
+                    second_label_from_left = neighbour_exchange_with_grad(
+                        left_rank, right_rank, second_label_to_right
+                    )
+
+                    loss += self._loss(
+                        first_features,
+                        second_features_from_left,
+                        first_label,
+                        second_label_from_left,
+                        mask_diagonal=mask_diagonal,
+                        **kwargs,
+                    )
+                    second_features_to_right = second_features_from_left
+                    second_label_to_right = second_label_from_left
+
         return {"contrastive_loss": loss} if output_dict else loss
 
 
-#         if self.world_size > 1:
-#             # exchange second features w/ neighbour world_size - 1 times
-#             right_rank = (self.rank + 1) % self.world_size
-#             left_rank = (self.rank - 1 + self.world_size) % self.world_size
-#             if self.bidir:
-#                 second_features_to_right = second_features_to_left = second_features
-#                 second_label_to_right = second_label_to_left = second_label
-#                 num_bidir, remainder = divmod(self.world_size - 1, 2)
-#                 for i in range(num_bidir):
-#                     second_features_recv, second_label_recv = neighbour_exchange_bidir_with_grad(
-#                         left_rank,
-#                         right_rank,
-#                         (second_features_to_left, second_label_to_left),
-#                         (second_features_to_right, second_label_to_right),
-#                     )
+class SigCLossNegHard(SigCLossBase):
+    def __init__(self, *args, min_neg_samples=1, neg_weight_step=100, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_neg_samples = min_neg_samples
+        self.neg_weight_step = neg_weight_step
+        self.neg_weight = 0
 
-#                     for f, l in zip(second_features_recv, second_label_recv):
-#                         loss += self._loss(
-#                             first_features,
-#                             f,
-#                             first_label,
-#                             l,
-#                             logit_scale,
-#                             logit_bias,
-#                             mask_diagonal,
-#                         )
-#                     second_features_to_left, second_label_to_left = second_features_recv[0], second_label_recv[0]
-#                     second_features_to_right, second_label_to_right = second_features_recv[1], second_label_recv[1]
+    def _loss(
+        self,
+        first_features,
+        second_features,
+        first_label,
+        second_label,
+        logit_scale,
+        logit_bias=None,
+        mask_diagonal=False,
+    ):
+        logits = self.get_logits(first_features, second_features, logit_scale, logit_bias)
+        labels = self.get_ground_truth(
+            first_features.device,
+            first_features.dtype,
+            first_label,
+            second_label,
+        )
+        loss_matrix = -F.logsigmoid(labels * logits)
+        if mask_diagonal:
+            loss_matrix.fill_diagonal_(0)
 
-#                 if remainder:
-#                     second_features_recv, second_label_recv = neighbour_exchange_with_grad(
-#                         left_rank, right_rank, (second_features_to_right, second_label_to_right))
+        pos_mask = labels == 1
+        neg_mask = labels == -1
+        num_pos = pos_mask.sum().clamp(min=1)
+        num_neg = neg_mask.sum().clamp(min=1)
 
-#                     loss += self._loss(
-#                         first_features,
-#                         second_features_recv,
-#                         first_label,
-#                         second_label_recv,
-#                         logit_scale,
-#                         logit_bias,
-#                         mask_diagonal,
-#                     )
-#             else:
-#                 second_features_to_right = second_features
-#                 second_label_to_right = second_label
-#                 for i in range(self.world_size - 1):
-#                     second_features_from_left, second_label_from_left = neighbour_exchange_with_grad(
-#                         left_rank, right_rank, (second_features_to_right, second_label_to_right))
+        # Calculate positive loss
+        pos_loss = (loss_matrix * pos_mask).sum()
 
-#                     loss += self._loss(
-#                         first_features,
-#                         second_features_from_left,
-#                         first_label,
-#                         second_label_from_left,
-#                         logit_scale,
-#                         logit_bias,
-#                         mask_diagonal,
-#                     )
-#                     second_features_to_right = second_features_from_left
-#                     second_label_to_right = second_label_from_left
+        # Select hard negatives
+        num_hard_neg = max(num_pos + self.neg_weight, self.min_neg_samples)
+        neg_losses = loss_matrix[neg_mask]
+        if num_hard_neg < num_neg:
+            hard_neg_losses, _ = torch.topk(neg_losses, int(num_hard_neg), largest=True)
+        else:
+            hard_neg_losses = neg_losses
 
-# return {"contrastive_loss": loss} if output_dict else loss
+        # print(f'pos:{num_pos}, neg: {min(num_hard_neg, num_neg)}')
+        # Calculate negative loss
+        neg_loss = hard_neg_losses.sum()
 
-# # Helper functions for distributed operations (you may need to implement these)
-# def neighbour_exchange_bidir_with_grad(left_rank, right_rank, tensor_to_left, tensor_to_right, group=None):
-#     # Implement this function for bidirectional exchange
-#     pass
+        loss = (pos_loss + neg_loss) / num_pos
+        return loss
 
-# def neighbour_exchange_with_grad(from_rank, to_rank, tensor, group=None):
-#     # Implement this function for unidirectional exchange
-#     pass
+    def set_neg_weight(self, neg_weight):
+        self.neg_weight = neg_weight
+
+    def step_neg_weight(self):
+        self.neg_weight += self.neg_weight_step
+        # Prevent overflow by clamping to the maximum value of float32
+        self.neg_weight = min(self.neg_weight, torch.finfo(torch.float32).max)
+
+
+class SigCLossNegWeight(SigCLossBase):
+    def __init__(self, *args, max_neg_weight=16, neg_weight_step=1.02, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.neg_weight = 1
+        self.max_neg_weight = max_neg_weight
+        self.neg_weight_step = neg_weight_step
+
+    def _loss(
+        self,
+        first_features,
+        second_features,
+        first_label,
+        second_label,
+        logit_scale,
+        logit_bias=None,
+        mask_diagonal=False,
+    ):
+        logits = self.get_logits(first_features, second_features, logit_scale, logit_bias)
+        labels = self.get_ground_truth(
+            first_features.device,
+            first_features.dtype,
+            first_label,
+            second_label,
+        )
+        loss_matrix = -F.logsigmoid(labels * logits)
+        if mask_diagonal:
+            loss_matrix.fill_diagonal_(0)
+
+        pos_mask = labels == 1
+        neg_mask = labels == -1
+        num_pos = pos_mask.sum().clamp(min=1)
+        num_neg = neg_mask.sum().clamp(min=1)
+
+        pos_loss = (loss_matrix * pos_mask).sum() / num_pos
+        neg_loss = (loss_matrix * neg_mask).sum() / num_neg
+
+        loss = pos_loss + self.neg_weight * neg_loss
+        return loss
+
+    def set_neg_weight(self, neg_weight):
+        self.neg_weight = neg_weight
+
+    def step_neg_weight(self):
+        if self.neg_weight >= self.max_neg_weight:
+            return
+        self.neg_weight *= self.neg_weight_step
+        if self.neg_weight > self.max_neg_weight:
+            self.neg_weight = self.max_neg_weight
+
+
+class SigCLossPN(SigCLossBase):
+    def _loss(
+        self,
+        first_features,
+        second_features,
+        first_label,
+        second_label,
+        pos_logit_scale,
+        neg_logit_scale,
+        pos_logit_bias=None,
+        neg_logit_bias=None,
+        mask_diagonal=False,
+    ):
+        labels = self.get_ground_truth(
+            first_features.device, first_features.dtype, first_label, second_label
+        )
+
+        pos_logits = self.get_logits(
+            first_features, second_features, pos_logit_scale, pos_logit_bias
+        )
+        pos_loss_matrix = -F.logsigmoid(pos_logits)
+        neg_logits = self.get_logits(
+            first_features, second_features, neg_logit_scale, neg_logit_bias
+        )
+        neg_loss_matrix = -F.logsigmoid(neg_logits)
+
+        pos_mask = labels == 1
+        if mask_diagonal:
+            pos_mask.fill_diagonal_(0)
+        neg_mask = labels == -1
+
+        pos_loss = (pos_loss_matrix * pos_mask).sum() / pos_mask.sum().clamp(min=1)
+        neg_loss = (neg_loss_matrix * neg_mask).sum() / neg_mask.sum().clamp(min=1)
+
+        return pos_loss + neg_loss * first_features.shape[0]
