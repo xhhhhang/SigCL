@@ -18,6 +18,7 @@ class SigCLossBase(nn.Module):
         world_size=1,
         bidir=True,
         use_horovod=False,
+        gather_batch=False,
     ):
         super().__init__()
         self.cache_labels = cache_labels
@@ -84,7 +85,7 @@ class SigCLossBase(nn.Module):
             **kwargs,
         )
 
-        if self.world_size > 1:
+        if self.gather_batch and self.world_size > 1:
             # exchange text features w/ neighbour world_size - 1 times
             right_rank = (self.rank + 1) % self.world_size
             left_rank = (self.rank - 1 + self.world_size) % self.world_size
