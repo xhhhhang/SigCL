@@ -1,19 +1,19 @@
 from .base import SigCLossBase
 
 
-class SigCLossPN(SigCLossBase):
-    def _loss(self, loss_info, extra_info, first_features, **kwargs):
-        loss_matrix = loss_info["loss_matrix"]
-        pos_mask = loss_info["pos_mask"]
-        neg_mask = loss_info["neg_mask"]
-        num_pos = extra_info["num_pos"]
-        num_neg = extra_info["num_neg"]
+# class SigCLossPN(SigCLossBase):
+#     def _loss(self, loss_info, extra_info, first_features, **kwargs):
+#         loss_matrix = loss_info["loss_matrix"]
+#         pos_mask = loss_info["pos_mask"]
+#         neg_mask = loss_info["neg_mask"]
+#         num_pos = extra_info["num_pos"]
+#         num_neg = extra_info["num_neg"]
 
-        pos_loss = (loss_matrix * pos_mask).sum() / num_pos
-        neg_loss = (loss_matrix * neg_mask).sum() / num_neg
-        loss = pos_loss + first_features.shape[0] * neg_loss
+#         pos_loss = (loss_matrix * pos_mask).sum() / num_pos
+#         neg_loss = (loss_matrix * neg_mask).sum() / num_neg
+#         loss = pos_loss + first_features.shape[0] * neg_loss
 
-        return loss
+#         return loss
 
 
 class SigCLossNegWeight(SigCLossBase):

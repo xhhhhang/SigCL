@@ -27,7 +27,7 @@ from util import (
 )
 
 from losses import SupConLoss
-from src.losses.loss import SigCLossBase, SigCLossNegWeight, SigCLossPN
+from src.losses.loss import SigCLossBase, SigCLossNegWeight
 
 
 def parse_option():
@@ -72,7 +72,6 @@ def parse_option():
         "--method",
         type=str,
         default="SupCon",
-        choices=["SupCon", "SimCLR", "SigCL", "SigCLPN", "SigCLBase"],
         help="choose method",
     )
 
@@ -95,6 +94,7 @@ def parse_option():
         "--neg_weight_step", type=float, default=1.02, help="step size for negative weight"
     )
     parser.add_argument("--max_neg_weight", type=int, default=16, help="maximum negative weight")
+    parser.add_argument("--neg_weight", type=float, default=1, help="negative weight")
     parser.add_argument("--log_wandb", action="store_true", help="log to wandb")
     parser.add_argument(
         "--init_logit_scale", type=float, default=np.log(10), help="initial logit scale"
@@ -227,13 +227,6 @@ def set_model(opt):
     if opt.method == "SupCon":
         model = SupConResNet(name=opt.model)
         criterion = SupConLoss(temperature=opt.temp)
-    elif opt.method == "SigCLPN":
-        model = SigCLResNet(
-            name=opt.model,
-            init_logit_scale=opt.init_logit_scale,
-            init_logit_bias=opt.init_logit_bias,
-        )
-        criterion = SigCLossPN()
     elif opt.method == "SigCL":
         model = SigCLResNet(
             name=opt.model,
@@ -243,13 +236,13 @@ def set_model(opt):
         criterion = SigCLossNegWeight(
             max_neg_weight=opt.max_neg_weight, neg_weight_step=opt.neg_weight_step
         )
-    elif opt.method == "SigCLBase":
+    elif opt.method.startswith("SigCLBase"):
         model = SigCLResNet(
             name=opt.model,
             init_logit_scale=opt.init_logit_scale,
             init_logit_bias=opt.init_logit_bias,
         )
-        criterion = SigCLossBase()
+        criterion = SigCLossBase(neg_weight=opt.neg_weight)
 
     if torch.cuda.is_available():
         print(f"cuda available: {torch.cuda.is_available()}")
@@ -285,7 +278,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
-        if opt.method == "SigCL" or opt.method == "SigCLPN" or opt.method == "SigCLBase":
+        if opt.method.startswith("SigCL"):
             model_out = model(images)
 
             features = model_out["features"]

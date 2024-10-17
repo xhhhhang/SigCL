@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Schedule execution of many runs
-# Run from root folder with: bash scripts/schedule.sh
-#!/bin/bash
 
 # Schedule execution of many runs
 # Run from root folder with: bash scripts/schedule.sh
@@ -19,9 +16,16 @@ COMMAND="python src/supcl/main_supcon.py --batch_size $BATCH_SIZE --learning_rat
 EXTRA_ARGS="$@"
 COMMAND="$COMMAND $EXTRA_ARGS"
 
-CUDA_VISIBLE_DEVICES=0 $COMMAND --method SigCLPN --init_logit_bias -10 &
-CUDA_VISIBLE_DEVICES=1 $COMMAND --method SigCL --max_neg_weight $BATCH_SIZE &
-CUDA_VISIBLE_DEVICES=2 $COMMAND --method SigCLBase &
-CUDA_VISIBLE_DEVICES=3 $COMMAND
+# Run commands in background and save their PIDs
+CUDA_VISIBLE_DEVICES=0 $COMMAND --method SigCLBase_1 & PID1=$!
+CUDA_VISIBLE_DEVICES=1 $COMMAND --method SigCLBase_BS --init_logit_bias -10 --neg_weight $BATCH_SIZE & PID2=$!
+CUDA_VISIBLE_DEVICES=2 $COMMAND --method SigCLBase_2BS --init_logit_bias -10 --neg_weight $((2*BATCH_SIZE)) & PID3=$!
+CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCL --max_neg_weight $BATCH_SIZE & PID4=$!
+CUDA_VISIBLE_DEVICES=4 $COMMAND & PID5=$!
 
-CUDA_VISIBLE_DEVICES=3 python main_ce.py --batch_size $BATCH_SIZE --learning_rate 0.8 --cosine --warm --print_freq $PRINT_FREQ --epochs $EPOCHS --model $MODEL
+CUDA_VISIBLE_DEVICES=5 python main_ce.py --batch_size $BATCH_SIZE --learning_rate 0.8 --cosine --warm --print_freq $PRINT_FREQ --epochs $EPOCHS --model $MODEL & PID6=$!
+
+# Wait for all background processes to finish
+wait $PID1 $PID2 $PID3 $PID4 $PID5 $PID6
+
+echo "All commands have finished executing."

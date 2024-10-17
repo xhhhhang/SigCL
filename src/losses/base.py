@@ -19,6 +19,7 @@ class SigCLossBase(nn.Module):
         bidir=True,
         use_horovod=False,
         gather_batch=False,
+        neg_weight=1,
     ):
         super().__init__()
         self.cache_labels = cache_labels
@@ -31,6 +32,8 @@ class SigCLossBase(nn.Module):
         # cache state
         self.prev_num_logits = 0
         self.labels = {}
+
+        self.neg_weight = neg_weight
 
     def get_ground_truth(self, device, dtype, first_label, second_label):
         labels = -torch.ones((len(first_label), len(second_label)), device=device, dtype=dtype)
@@ -106,7 +109,7 @@ class SigCLossBase(nn.Module):
 
         pos_loss = (loss_matrix * pos_mask).sum() / num_pos
         neg_loss = (loss_matrix * neg_mask).sum() / num_neg
-        loss = pos_loss + neg_loss
+        loss = pos_loss + neg_loss * self.neg_weight
 
         return loss
 
