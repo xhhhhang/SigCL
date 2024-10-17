@@ -5,11 +5,12 @@ import sys
 import time
 
 import rootutils
-import tensorboard_logger as tb_logger
+import wandb
 import torch
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+from dotenv import load_dotenv
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -24,14 +25,7 @@ from util import (
     warmup_learning_rate,
 )
 
-try:
-    import apex
-    from apex import amp, optimizers
-except ImportError:
-    pass
-
 from src.models.loss import SigCLossNegHard, SigCLossNegWeight, SigCLossPN
-
 
 def parse_option():
     parser = argparse.ArgumentParser("argument for training")
@@ -148,9 +142,16 @@ def parse_option():
         else:
             opt.warmup_to = opt.learning_rate
 
-    opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
-    if not os.path.isdir(opt.tb_folder):
-        os.makedirs(opt.tb_folder)
+    # Load environment variables from .env file
+    load_dotenv()
+
+    # Add wandb initialization
+    wandb.init(
+        project="SigCL",
+        name=opt.model_name,
+        config=vars(opt),
+        entity=os.getenv("WANDB_ENTITY"),
+    )
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):
@@ -231,12 +232,10 @@ def set_model(opt):
             min_neg_samples=opt.batch_size, neg_weight_step=opt.neg_weight_step
         )
 
-    # enable synchronized Batch Normalization
-    if opt.syncBN:
-        model = apex.parallel.convert_syncbn_model(model)
-
     if torch.cuda.is_available():
+        print(f"cuda available: {torch.cuda.is_available()}")
         if torch.cuda.device_count() > 1:
+            print(f"cuda device count: {torch.cuda.device_count()}")
             model.encoder = torch.nn.DataParallel(model.encoder)
         model = model.cuda()
         criterion = criterion.cuda()
@@ -377,8 +376,7 @@ def main():
     # build optimizer
     optimizer = set_optimizer(opt, model)
 
-    # tensorboard
-    logger = tb_logger.Logger(logdir=opt.tb_folder, flush_secs=2)
+    prev_params = {name: param.data.clone() for name, param in model.named_parameters()}
 
     # training routine
     for epoch in range(1, opt.epochs + 1):
@@ -390,9 +388,32 @@ def main():
         time2 = time.time()
         print(f"epoch {epoch}, total time {time2 - time1:.2f}")
 
-        # tensorboard logger
-        logger.log_value("loss", loss, epoch)
-        logger.log_value("learning_rate", optimizer.param_groups[0]["lr"], epoch)
+        # Calculate gradient norm
+        total_norm = 0
+        for p in model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** 0.5
+
+        # Calculate parameter change
+        param_change_sum = 0
+        current_params = {}
+        for name, param in model.named_parameters():
+            current_params[name] = param.data.clone()
+            if name in prev_params:
+                param_change_sum += torch.sum(torch.abs(param.data - prev_params[name]))
+
+        # Replace tensorboard logging with wandb logging
+        wandb.log({
+            "epoch": epoch,
+            "loss": loss,
+            "learning_rate": optimizer.param_groups[0]["lr"],
+            "grad_norm": total_norm,
+            "param_change": param_change_sum.item(),
+            "logit_scale": model.logit_scale.item(),
+            "logit_bias": model.logit_bias.item()
+        })
 
         if epoch % opt.save_freq == 0:
             save_file = os.path.join(opt.save_folder, f"ckpt_epoch_{epoch}.pth")
@@ -401,6 +422,9 @@ def main():
     # save the last model
     save_file = os.path.join(opt.save_folder, "last.pth")
     save_model(model, optimizer, opt, opt.epochs, save_file)
+
+    # Close wandb run
+    wandb.finish()
 
 
 if __name__ == "__main__":

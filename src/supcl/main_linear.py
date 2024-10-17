@@ -15,12 +15,6 @@ from util import (
     warmup_learning_rate,
 )
 
-try:
-    import apex
-    from apex import amp, optimizers
-except ImportError:
-    pass
-
 
 def parse_option():
     parser = argparse.ArgumentParser("argument for training")

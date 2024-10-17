@@ -6,7 +6,6 @@ import argparse
 import time
 import math
 
-import tensorboard_logger as tb_logger
 import torch
 import torch.backends.cudnn as cudnn
 from torchvision import transforms, datasets
@@ -15,12 +14,6 @@ from util import AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate, accuracy
 from util import set_optimizer, save_model
 from networks.resnet_big import SupCEResNet
-
-try:
-    import apex
-    from apex import amp, optimizers
-except ImportError:
-    pass
 
 
 def parse_option():
@@ -171,10 +164,6 @@ def set_model(opt):
     model = SupCEResNet(name=opt.model, num_classes=opt.n_cls)
     criterion = torch.nn.CrossEntropyLoss()
 
-    # enable synchronized Batch Normalization
-    if opt.syncBN:
-        model = apex.parallel.convert_syncbn_model(model)
-
     if torch.cuda.is_available():
         if torch.cuda.device_count() > 1:
             model = torch.nn.DataParallel(model)
@@ -186,6 +175,7 @@ def set_model(opt):
 
 
 def train(train_loader, model, criterion, optimizer, epoch, opt):
+    import tensorboard_logger as tb_logger
     """one epoch training"""
     model.train()
 
