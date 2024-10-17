@@ -1,5 +1,6 @@
 import argparse
 import math
+import os
 import sys
 import time
 
@@ -14,6 +15,12 @@ from util import (
     set_optimizer,
     warmup_learning_rate,
 )
+
+# Import wandb conditionally
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 
 def parse_option():
@@ -48,7 +55,19 @@ def parse_option():
 
     parser.add_argument("--ckpt", type=str, default="", help="path to pre-trained model")
     parser.add_argument(
-        "--method", type=str, default="SupCon", choices=["SupCon", "SigCL"], help="method"
+        "--method",
+        type=str,
+        default="SupCon",
+        choices=["SupCon", "SigCL", "SigCLBase", "SigCLPN"],
+        help="method",
+    )
+    parser.add_argument(
+        "--log_wandb", action="store_true", help="enable logging to Weights & Biases"
+    )
+    parser.add_argument(
+        "--disable_progress",
+        action="store_true",
+        help="disable all print and wandb except the last print",
     )
 
     opt = parser.parse_args()
@@ -97,7 +116,7 @@ def parse_option():
 def set_model(opt):
     if opt.method == "SupCon":
         model = SupConResNet(name=opt.model)
-    elif opt.method == "SigCL":
+    elif opt.method.startswith("SigCL"):
         model = SigCLResNet(name=opt.model)
     else:
         raise ValueError(f"method not supported: {opt.method}")
@@ -173,7 +192,7 @@ def train(train_loader, model, classifier, criterion, optimizer, epoch, opt):
         end = time.time()
 
         # print info
-        if (idx + 1) % opt.print_freq == 0:
+        if (idx + 1) % opt.print_freq == 0 and not opt.disable_progress:
             print(
                 "Train: [{0}][{1}/{2}]\t"
                 "BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
@@ -190,6 +209,17 @@ def train(train_loader, model, classifier, criterion, optimizer, epoch, opt):
                 )
             )
             sys.stdout.flush()
+
+        # Log to wandb if enabled
+        if opt.log_wandb and not opt.disable_progress:
+            wandb.log(
+                {
+                    "train/loss": losses.val,
+                    "train/acc@1": top1.val,
+                    "train/lr": optimizer.param_groups[0]["lr"],
+                },
+                step=epoch * len(train_loader) + idx,
+            )
 
     return losses.avg, top1.avg
 
@@ -223,7 +253,7 @@ def validate(val_loader, model, classifier, criterion, opt):
             batch_time.update(time.time() - end)
             end = time.time()
 
-            if idx % opt.print_freq == 0:
+            if idx % opt.print_freq == 0 and not opt.disable_progress:
                 print(
                     "Test: [{0}/{1}]\t"
                     "Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
@@ -233,13 +263,35 @@ def validate(val_loader, model, classifier, criterion, opt):
                     )
                 )
 
-    print(f" * Acc@1 {top1.avg:.3f}")
+    # Log to wandb if enabled
+    if opt.log_wandb and not opt.disable_progress:
+        wandb.log(
+            {
+                "val/loss": losses.avg,
+                "val/acc@1": top1.avg,
+            }
+        )
+
+    if not opt.disable_progress:
+        print(f" * Acc@1 {top1.avg:.3f}")
     return losses.avg, top1.avg
 
 
 def main():
     best_acc = 0
     opt = parse_option()
+
+    # Initialize wandb if enabled and progress is not disabled
+    if opt.log_wandb and not opt.disable_progress:
+        if wandb is None:
+            raise ImportError("Please install wandb to use logging functionality")
+
+        wandb.init(
+            project=os.environ.get("WANDB_PROJECT", "SigCL"),
+            entity=os.environ.get("WANDB_ENTITY", None),
+            config=vars(opt),
+            name=opt.model_name,
+        )
 
     # build data loader
     train_loader, val_loader = set_loader(opt)
@@ -258,14 +310,23 @@ def main():
         time1 = time.time()
         loss, acc = train(train_loader, model, classifier, criterion, optimizer, epoch, opt)
         time2 = time.time()
-        print(f"Train epoch {epoch}, total time {time2 - time1:.2f}, accuracy:{acc:.2f}")
+        if not opt.disable_progress:
+            print(f"Train epoch {epoch}, total time {time2 - time1:.2f}, accuracy:{acc:.2f}")
 
         # eval for one epoch
         loss, val_acc = validate(val_loader, model, classifier, criterion, opt)
         if val_acc > best_acc:
             best_acc = val_acc
 
-    print(f"best accuracy: {best_acc:.2f}")
+        # Log best accuracy to wandb if enabled and progress is not disabled
+        if opt.log_wandb and not opt.disable_progress:
+            wandb.log({"best_acc": best_acc}, step=(epoch + 1) * len(train_loader))
+
+    print(f"{opt.method} {opt.model} {opt.dataset} best accuracy: {best_acc:.2f}")
+
+    # Finish wandb run if enabled and progress is not disabled
+    if opt.log_wandb and not opt.disable_progress:
+        wandb.finish()
 
 
 if __name__ == "__main__":

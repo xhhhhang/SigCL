@@ -1,4 +1,5 @@
-from base import SigCLossBase
+from .base import SigCLossBase
+
 
 class SigCLossPN(SigCLossBase):
     def _loss(self, loss_info, extra_info, first_features, **kwargs):
@@ -13,6 +14,7 @@ class SigCLossPN(SigCLossBase):
         loss = pos_loss + first_features.shape[0] * neg_loss
 
         return loss
+
 
 class SigCLossNegWeight(SigCLossBase):
     def __init__(self, *args, max_neg_weight=16, neg_weight_step=1.02, **kwargs):

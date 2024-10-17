@@ -4,18 +4,19 @@ import os
 import sys
 import time
 
+import numpy as np
 import rootutils
-import wandb
 import torch
 import torch.backends.cudnn as cudnn
+from dotenv import load_dotenv
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from dotenv import load_dotenv
+
+import wandb
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
-from losses import SupConLoss
-from networks.resnet_big import SigCLPNResNet, SigCLResNet, SupConResNet
+from networks.resnet_big import SigCLResNet, SupConResNet
 from util import (
     AverageMeter,
     TwoCropTransform,
@@ -25,7 +26,9 @@ from util import (
     warmup_learning_rate,
 )
 
-from src.losses.loss import SigCLossNegHard, SigCLossNegWeight, SigCLossPN
+from losses import SupConLoss
+from src.losses.loss import SigCLossBase, SigCLossNegWeight, SigCLossPN
+
 
 def parse_option():
     parser = argparse.ArgumentParser("argument for training")
@@ -69,7 +72,7 @@ def parse_option():
         "--method",
         type=str,
         default="SupCon",
-        choices=["SupCon", "SimCLR", "SigCL", "SigCLPN", "SigCLNegHard"],
+        choices=["SupCon", "SimCLR", "SigCL", "SigCLPN", "SigCLBase"],
         help="choose method",
     )
 
@@ -92,6 +95,11 @@ def parse_option():
         "--neg_weight_step", type=float, default=1.02, help="step size for negative weight"
     )
     parser.add_argument("--max_neg_weight", type=int, default=16, help="maximum negative weight")
+    parser.add_argument("--log_wandb", action="store_true", help="log to wandb")
+    parser.add_argument(
+        "--init_logit_scale", type=float, default=np.log(10), help="initial logit scale"
+    )
+    parser.add_argument("--init_logit_bias", type=float, default=0, help="initial logit bias")
 
     opt = parser.parse_args()
 
@@ -146,12 +154,13 @@ def parse_option():
     load_dotenv()
 
     # Add wandb initialization
-    wandb.init(
-        project="SigCL",
-        name=opt.model_name,
-        config=vars(opt),
-        entity=os.getenv("WANDB_ENTITY"),
-    )
+    if opt.log_wandb:
+        wandb.init(
+            project=os.getenv("WANDB_PROJECT"),
+            name=opt.model_name,
+            config=vars(opt),
+            entity=os.getenv("WANDB_ENTITY"),
+        )
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):
@@ -219,18 +228,28 @@ def set_model(opt):
         model = SupConResNet(name=opt.model)
         criterion = SupConLoss(temperature=opt.temp)
     elif opt.method == "SigCLPN":
-        model = SigCLPNResNet(name=opt.model)
+        model = SigCLResNet(
+            name=opt.model,
+            init_logit_scale=opt.init_logit_scale,
+            init_logit_bias=opt.init_logit_bias,
+        )
         criterion = SigCLossPN()
     elif opt.method == "SigCL":
-        model = SigCLResNet(name=opt.model)
+        model = SigCLResNet(
+            name=opt.model,
+            init_logit_scale=opt.init_logit_scale,
+            init_logit_bias=opt.init_logit_bias,
+        )
         criterion = SigCLossNegWeight(
             max_neg_weight=opt.max_neg_weight, neg_weight_step=opt.neg_weight_step
         )
-    elif opt.method == "SigCLNegHard":
-        model = SigCLResNet(name=opt.model)
-        criterion = SigCLossNegHard(
-            min_neg_samples=opt.batch_size, neg_weight_step=opt.neg_weight_step
+    elif opt.method == "SigCLBase":
+        model = SigCLResNet(
+            name=opt.model,
+            init_logit_scale=opt.init_logit_scale,
+            init_logit_bias=opt.init_logit_bias,
         )
+        criterion = SigCLossBase()
 
     if torch.cuda.is_available():
         print(f"cuda available: {torch.cuda.is_available()}")
@@ -266,7 +285,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
-        if opt.method == "SigCL" or opt.method == "SigCLNegHard":
+        if opt.method == "SigCL" or opt.method == "SigCLPN" or opt.method == "SigCLBase":
             model_out = model(images)
 
             features = model_out["features"]
@@ -283,21 +302,8 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
                 logit_bias=logit_bias,
                 mask_diagonal=True,
             )
-            criterion.step_neg_weight()
-        elif opt.method == "SigCLPN":
-            model_out = model(images)
-            labels = labels.repeat(2)
-            loss = criterion(
-                first_features=model_out["features"],
-                second_features=model_out["features"],
-                first_label=labels,
-                second_label=labels,
-                pos_logit_scale=model_out["pos_logit_scale"],
-                neg_logit_scale=model_out["neg_logit_scale"],
-                pos_logit_bias=model_out["pos_logit_bias"],
-                neg_logit_bias=model_out["neg_logit_bias"],
-                mask_diagonal=True,
-            )
+            if opt.method == "SigCL":
+                criterion.step_neg_weight()
         else:
             features = model(images)
             f1, f2 = torch.split(features, [bsz, bsz], dim=0)
@@ -323,23 +329,21 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 
         # print info
         if (idx + 1) % opt.print_freq == 0:
-            if opt.method == "SigCLPN":
-                print(
-                    f"pos_logit_scale: {model_out['pos_logit_scale'].item()}, neg_logit_scale: {model_out['neg_logit_scale'].item()}"
-                )
-            if opt.method == "SigCL" or opt.method == "SigCLNegHard":
-                print(
+            if opt.method == "SigCL" or opt.method == "SigCLPN":
+                log_str = (
                     "Train: [{0}][{1}/{2}]\t"
-                    # "BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
-                    # "DT {data_time.val:.3f} ({data_time.avg:.3f})\t"
-                    "neg_weight {neg_weight:.5f}\t"
                     "logit_scale {logit_scale:.3f}\t"
                     "logit_bias {logit_bias:.3f}\t"
-                    "loss {loss.val:.5f} ({loss.avg:.5f})".format(
+                    "loss {loss.val:.5f} ({loss.avg:.5f})"
+                )
+                if opt.method == "SigCL":
+                    log_str = "neg_weight {neg_weight:.5f}\t" + log_str
+                print(
+                    log_str.format(
                         epoch,
                         idx + 1,
                         len(train_loader),
-                        neg_weight=criterion.neg_weight,
+                        neg_weight=criterion.neg_weight if opt.method == "SigCL" else None,
                         logit_scale=logit_scale.item(),
                         logit_bias=logit_bias.item(),
                         loss=losses,
@@ -376,8 +380,6 @@ def main():
     # build optimizer
     optimizer = set_optimizer(opt, model)
 
-    prev_params = {name: param.data.clone() for name, param in model.named_parameters()}
-
     # training routine
     for epoch in range(1, opt.epochs + 1):
         adjust_learning_rate(opt, optimizer, epoch)
@@ -394,26 +396,24 @@ def main():
             if p.grad is not None:
                 param_norm = p.grad.data.norm(2)
                 total_norm += param_norm.item() ** 2
-        total_norm = total_norm ** 0.5
-
-        # Calculate parameter change
-        param_change_sum = 0
-        current_params = {}
-        for name, param in model.named_parameters():
-            current_params[name] = param.data.clone()
-            if name in prev_params:
-                param_change_sum += torch.sum(torch.abs(param.data - prev_params[name]))
+        total_norm = total_norm**0.5
 
         # Replace tensorboard logging with wandb logging
-        wandb.log({
-            "epoch": epoch,
-            "loss": loss,
-            "learning_rate": optimizer.param_groups[0]["lr"],
-            "grad_norm": total_norm,
-            "param_change": param_change_sum.item(),
-            "logit_scale": model.logit_scale.item(),
-            "logit_bias": model.logit_bias.item()
-        })
+        if opt.log_wandb:
+            log_data = {
+                "epoch": epoch,
+                "loss": loss,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "grad_norm": total_norm,
+            }
+            if opt.method.startswith("Sig"):
+                log_data.update(
+                    {
+                        "logit_scale": model.logit_scale.item(),
+                        "logit_bias": model.logit_bias.item(),
+                    }
+                )
+            wandb.log(log_data)
 
         if epoch % opt.save_freq == 0:
             save_file = os.path.join(opt.save_folder, f"ckpt_epoch_{epoch}.pth")
@@ -424,7 +424,8 @@ def main():
     save_model(model, optimizer, opt, opt.epochs, save_file)
 
     # Close wandb run
-    wandb.finish()
+    if opt.log_wandb:
+        wandb.finish()
 
 
 if __name__ == "__main__":

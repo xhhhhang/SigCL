@@ -9,6 +9,7 @@ from open_clip.loss import (
     neighbour_exchange_with_grad,
 )
 
+
 class SigCLossBase(nn.Module):
     def __init__(
         self,
@@ -97,7 +98,16 @@ class SigCLossBase(nn.Module):
         logit_bias=None,
         mask_diagonal=False,
     ):
-        loss = loss_info["loss_matrix"].sum() / first_features.shape[0]
+        loss_matrix = loss_info["loss_matrix"]
+        pos_mask = loss_info["pos_mask"]
+        neg_mask = loss_info["neg_mask"]
+        num_pos = extra_info["num_pos"]
+        num_neg = extra_info["num_neg"]
+
+        pos_loss = (loss_matrix * pos_mask).sum() / num_pos
+        neg_loss = (loss_matrix * neg_mask).sum() / num_neg
+        loss = pos_loss + neg_loss
+
         return loss
 
     def forward(

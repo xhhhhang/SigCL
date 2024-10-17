@@ -214,36 +214,6 @@ class SigCLResNet(SupConResNet):
         }
 
 
-class SigCLPNResNet(SupConResNet):
-    def __init__(
-        self,
-        name="resnet50",
-        head="mlp",
-        feat_dim=128,
-        init_pos_logit_scale=np.log(10),
-        init_neg_logit_scale=np.log(1),
-        init_pos_logit_bias=-10,
-        init_neg_logit_bias=-10,
-    ):
-        super().__init__(name, head, feat_dim)
-        self.pos_logit_scale = nn.Parameter(torch.ones([]) * init_pos_logit_scale)
-        self.neg_logit_scale = nn.Parameter(torch.ones([]) * init_neg_logit_scale)
-        # self.pos_logit_bias = nn.Parameter(torch.ones([]) * init_pos_logit_bias)
-        # self.neg_logit_bias = nn.Parameter(torch.ones([]) * init_neg_logit_bias)
-
-    def forward(self, x):
-        feat = super().forward(x)
-        return {
-            "features": feat,
-            "pos_logit_scale": self.pos_logit_scale,
-            "neg_logit_scale": self.neg_logit_scale,
-            # "pos_logit_bias": self.pos_logit_bias,
-            # "neg_logit_bias": self.neg_logit_bias,
-            "pos_logit_bias": None,
-            "neg_logit_bias": None,
-        }
-
-
 class SupCEResNet(nn.Module):
     """Encoder + classifier."""
 
