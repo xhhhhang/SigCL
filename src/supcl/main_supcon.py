@@ -25,7 +25,7 @@ from util import (
     warmup_learning_rate,
 )
 
-from src.models.loss import SigCLossNegHard, SigCLossNegWeight, SigCLossPN
+from src.losses.loss import SigCLossNegHard, SigCLossNegWeight, SigCLossPN
 
 def parse_option():
     parser = argparse.ArgumentParser("argument for training")
