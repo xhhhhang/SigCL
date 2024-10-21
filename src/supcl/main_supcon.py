@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import wandb
+from lightning.fabric import Fabric
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -244,19 +245,10 @@ def set_model(opt):
         )
         criterion = SigCLossBase(neg_weight=opt.neg_weight)
 
-    if torch.cuda.is_available():
-        print(f"cuda available: {torch.cuda.is_available()}")
-        if torch.cuda.device_count() > 1:
-            print(f"cuda device count: {torch.cuda.device_count()}")
-            model.encoder = torch.nn.DataParallel(model.encoder)
-        model = model.cuda()
-        criterion = criterion.cuda()
-        cudnn.benchmark = True
-
     return model, criterion
 
 
-def train(train_loader, model, criterion, optimizer, epoch, opt):
+def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
     """One epoch training."""
     model.train()
 
@@ -269,9 +261,6 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         data_time.update(time.time() - end)
 
         images = torch.cat([images[0], images[1]], dim=0)
-        if torch.cuda.is_available():
-            images = images.cuda(non_blocking=True)
-            labels = labels.cuda(non_blocking=True)
         bsz = labels.shape[0]
 
         # warm-up learning rate
@@ -312,9 +301,9 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         losses.update(loss.item(), bsz)
 
         # SGD
-        optimizer.zero_grad()
-        loss.backward()
+        fabric.backward(loss)
         optimizer.step()
+        optimizer.zero_grad()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -364,6 +353,10 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 def main():
     opt = parse_option()
 
+    # Initialize Fabric
+    fabric = Fabric(accelerator="auto", devices="auto")
+    fabric.launch()
+
     # build data loader
     train_loader = set_loader(opt)
 
@@ -373,13 +366,17 @@ def main():
     # build optimizer
     optimizer = set_optimizer(opt, model)
 
+    # Setup model, optimizer, and dataloader with Fabric
+    model, optimizer = fabric.setup(model, optimizer)
+    train_loader = fabric.setup_dataloaders(train_loader)
+
     # training routine
     for epoch in range(1, opt.epochs + 1):
         adjust_learning_rate(opt, optimizer, epoch)
 
         # train for one epoch
         time1 = time.time()
-        loss = train(train_loader, model, criterion, optimizer, epoch, opt)
+        loss = train(fabric, train_loader, model, criterion, optimizer, epoch, opt)
         time2 = time.time()
         print(f"epoch {epoch}, total time {time2 - time1:.2f}")
 
