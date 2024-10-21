@@ -11,6 +11,7 @@ import torch.backends.cudnn as cudnn
 from dotenv import load_dotenv
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+from torch.utils.data import Subset
 
 import wandb
 from lightning.fabric import Fabric
@@ -101,6 +102,7 @@ def parse_option():
         "--init_logit_scale", type=float, default=np.log(10), help="initial logit scale"
     )
     parser.add_argument("--init_logit_bias", type=float, default=0, help="initial logit bias")
+    parser.add_argument("--overfit_batch", action="store_true", help="train on a single batch for all epochs")
 
     opt = parser.parse_args()
 
@@ -211,14 +213,20 @@ def set_loader(opt):
     else:
         raise ValueError(opt.dataset)
 
+    if opt.overfit_batch:
+        # Create a subset with only one batch
+        subset_indices = list(range(opt.batch_size))
+        train_dataset = Subset(train_dataset, subset_indices)
+
     train_sampler = None
     train_loader = DataLoader(
         train_dataset,
         batch_size=opt.batch_size,
-        shuffle=(train_sampler is None),
+        shuffle=(train_sampler is None and not opt.overfit_batch),
         num_workers=opt.num_workers,
         pin_memory=True,
         sampler=train_sampler,
+        persistent_workers=True,
     )
 
     return train_loader
