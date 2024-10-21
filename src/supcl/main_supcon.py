@@ -232,10 +232,10 @@ def set_loader(opt):
     return train_loader
 
 
-def set_model(opt):
+def set_model(opt, fabric):
     if opt.method == "SupCon":
         model = SupConResNet(name=opt.model)
-        criterion = SupConLoss(temperature=opt.temp)
+        criterion = SupConLoss(temperature=opt.temp, device=fabric.device)
     elif opt.method == "SigCL":
         model = SigCLResNet(
             name=opt.model,
@@ -369,7 +369,7 @@ def main():
     train_loader = set_loader(opt)
 
     # build model and criterion
-    model, criterion = set_model(opt)
+    model, criterion = set_model(opt, fabric)
 
     # build optimizer
     optimizer = set_optimizer(opt, model)
