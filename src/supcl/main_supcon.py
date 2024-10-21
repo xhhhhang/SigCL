@@ -9,12 +9,11 @@ import rootutils
 import torch
 import torch.backends.cudnn as cudnn
 from dotenv import load_dotenv
-from torch.utils.data import DataLoader
+from lightning.fabric import Fabric
+from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
-from torch.utils.data import Subset
 
 import wandb
-from lightning.fabric import Fabric
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -102,7 +101,9 @@ def parse_option():
         "--init_logit_scale", type=float, default=np.log(10), help="initial logit scale"
     )
     parser.add_argument("--init_logit_bias", type=float, default=0, help="initial logit bias")
-    parser.add_argument("--overfit_batch", action="store_true", help="train on a single batch for all epochs")
+    parser.add_argument(
+        "--overfit_batch", action="store_true", help="train on a single batch for all epochs"
+    )
 
     opt = parser.parse_args()
 
@@ -235,7 +236,7 @@ def set_loader(opt):
 def set_model(opt, fabric):
     if opt.method == "SupCon":
         model = SupConResNet(name=opt.model)
-        criterion = SupConLoss(temperature=opt.temp, device=fabric.device)
+        criterion = SupConLoss(temperature=opt.temp)
     elif opt.method == "SigCL":
         model = SigCLResNet(
             name=opt.model,
@@ -291,6 +292,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
                 logit_scale=logit_scale,
                 logit_bias=logit_bias,
                 mask_diagonal=True,
+                fabric=fabric,
             )
             if opt.method == "SigCL":
                 criterion.step_neg_weight()
@@ -299,9 +301,9 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
             f1, f2 = torch.split(features, [bsz, bsz], dim=0)
             features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
             if opt.method == "SupCon":
-                loss = criterion(features, labels)
+                loss = criterion(features, labels, fabric=fabric)
             elif opt.method == "SimCLR":
-                loss = criterion(features)
+                loss = criterion(features, fabric=fabric)
             else:
                 raise ValueError(f"contrastive method not supported: {opt.method}")
 
