@@ -2,7 +2,7 @@ default_language_version:
   python: python3
 
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
+  - repo: git@github.com:pre-commit/pre-commit-hooks.git
     rev: v4.4.0
     hooks:
       # list of supported hooks: https://pre-commit.com/hooks.html
@@ -18,28 +18,28 @@ repos:
       - id: check-added-large-files
 
   # python code formatting
-  - repo: https://github.com/psf/black
+  - repo: git@github.com:psf/black.git
     rev: 23.1.0
     hooks:
       - id: black
         args: [--line-length, "99"]
 
   # python import sorting
-  - repo: https://github.com/PyCQA/isort
+  - repo: git@github.com:PyCQA/isort.git
     rev: 5.12.0
     hooks:
       - id: isort
         args: ["--profile", "black", "--filter-files"]
 
   # python upgrading syntax to newer version
-  - repo: https://github.com/asottile/pyupgrade
+  - repo: git@github.com:asottile/pyupgrade.git
     rev: v3.3.1
     hooks:
       - id: pyupgrade
         args: [--py38-plus]
 
   # python docstring formatting
-  - repo: https://github.com/myint/docformatter
+  - repo: git@github.com:myint/docformatter.git
     rev: v1.7.4
     hooks:
       - id: docformatter
@@ -53,7 +53,7 @@ repos:
           ]
 
   # # python docstring coverage checking
-  # - repo: https://github.com/econchick/interrogate
+  # - repo: git@github.com:econchick/interrogate.git
   #   rev: 1.5.0 # or master if you're bold
   #   hooks:
   #     - id: interrogate
@@ -69,7 +69,7 @@ repos:
   #         ]
 
   # python check (PEP8), programming errors and code complexity
-  - repo: https://github.com/PyCQA/flake8
+  - repo: git@github.com:PyCQA/flake8.git
     rev: 6.0.0
     hooks:
       - id: flake8
@@ -83,14 +83,14 @@ repos:
         additional_dependencies: [flake8-rst-docstrings==0.3.0]
 
   # python security linter
-  - repo: https://github.com/PyCQA/bandit
+  - repo: git@github.com:PyCQA/bandit.git
     rev: "1.7.5"
     hooks:
       - id: bandit
         args: ["-s", "B101"]
 
   # yaml formatting
-  - repo: https://github.com/pre-commit/mirrors-prettier
+  - repo: git@github.com:pre-commit/mirrors-prettier.git
     rev: v3.0.0-alpha.6
     hooks:
       - id: prettier
@@ -98,13 +98,13 @@ repos:
         exclude: "environment.yaml"
 
   # shell scripts linter
-  - repo: https://github.com/shellcheck-py/shellcheck-py
+  - repo: git@github.com:shellcheck-py/shellcheck-py.git
     rev: v0.9.0.2
     hooks:
       - id: shellcheck
 
   # md formatting
-  - repo: https://github.com/executablebooks/mdformat
+  - repo: git@github.com:executablebooks/mdformat.git
     rev: 0.7.16
     hooks:
       - id: mdformat
@@ -117,7 +117,7 @@ repos:
           # - mdformat-black
 
   # word spelling linter
-  - repo: https://github.com/codespell-project/codespell
+  - repo: git@github.com:codespell-project/codespell.git
     rev: v2.2.4
     hooks:
       - id: codespell
@@ -126,13 +126,13 @@ repos:
           # - --ignore-words-list=abc,def
 
   # jupyter notebook cell output clearing
-  - repo: https://github.com/kynan/nbstripout
+  - repo: git@github.com:kynan/nbstripout.git
     rev: 0.6.1
     hooks:
       - id: nbstripout
 
   # jupyter notebook linting
-  - repo: https://github.com/nbQA-dev/nbQA
+  - repo: git@github.com:nbQA-dev/nbQA.git
     rev: 1.6.3
     hooks:
       - id: nbqa-black

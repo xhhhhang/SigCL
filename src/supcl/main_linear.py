@@ -58,7 +58,6 @@ def parse_option():
         "--method",
         type=str,
         default="SupCon",
-        choices=["SupCon", "SigCL", "SigCLBase", "SigCLPN"],
         help="method",
     )
     parser.add_argument(
