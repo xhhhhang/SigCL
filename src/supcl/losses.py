@@ -4,7 +4,6 @@ Date: May 07, 2020
 """
 
 import torch
-import torch.distributed
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
@@ -27,10 +26,9 @@ class SupConLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
 
-    def __init__(self, temperature=0.07, contrast_mode="all", base_temperature=0.07):
+    def __init__(self, temperature=0.07, base_temperature=0.07):
         super().__init__()
         self.temperature = temperature
-        self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
 
     def forward(self, features, labels=None, mask=None, fabric=None):
@@ -53,56 +51,39 @@ class SupConLoss(nn.Module):
             if labels.shape[0] != batch_size:
                 raise ValueError("Num of labels does not match num of features")
 
-        contrast_count = features.shape[1]
-        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
+        num_view = features.shape[1]
+        features = torch.cat(torch.unbind(features, dim=1), dim=0)
 
         if fabric and fabric.world_size > 1:
-            all_contrast_feature = torch.cat(
-                torch.distributed.nn.all_gather(contrast_feature), dim=0
-            )
-            if labels is not None:
-                all_labels = concat_all_gather(labels)  # no gradient gather
-            else:
-                all_labels = None
+            all_features = torch.cat(dist.nn.all_gather(features), dim=0)
+            all_labels = concat_all_gather(labels) if labels is not None else None
         else:
-            all_contrast_feature = contrast_feature
+            all_features = features
             all_labels = labels
-
-        if self.contrast_mode == "one":
-            anchor_feature = features[:, 0]
-            anchor_count = 1
-        elif self.contrast_mode == "all":
-            anchor_feature = contrast_feature
-            anchor_count = contrast_count
-        else:
-            raise ValueError(f"Unknown mode: {self.contrast_mode}")
 
         # compute logits
         anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_feature, all_contrast_feature.T), self.temperature
+            torch.matmul(features, all_features.T),
+            self.temperature
         )
 
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
 
-        if fabric and fabric.world_size > 1:
-            rank = fabric.local_rank
-        else:
-            rank = 0
+        rank = fabric.local_rank if fabric and fabric.world_size > 1 else 0
 
         # compute mask
         if all_labels is not None:
             mask = torch.eq(labels, all_labels.T).float().to(device)
-        mask = mask.repeat(anchor_count, contrast_count)
+        mask = mask.repeat(num_view, num_view)
 
         # mask-out self-contrast cases
         logits_mask = torch.scatter(
             torch.ones_like(mask),
             1,
-            torch.arange(batch_size * anchor_count).view(-1, 1).to(device)
-            + rank * batch_size * anchor_count,
-            0,
+            torch.arange(batch_size * num_view).view(-1, 1).to(device) + rank * batch_size * num_view,
+            0
         )
         mask = mask * logits_mask
 
@@ -112,17 +93,12 @@ class SupConLoss(nn.Module):
 
         # compute mean of log-likelihood over positive
         # modified to handle edge cases when there is no positive pair
-        # for an anchor point.
-        # Edge case e.g.:-
-        # features of shape: [4,1,...]
-        # labels:            [0,1,1,2]
-        # loss before mean:  [nan, ..., ..., nan]
         mask_pos_pairs = mask.sum(1)
         mask_pos_pairs = torch.where(mask_pos_pairs < 1e-6, 1, mask_pos_pairs)
         mean_log_prob_pos = (mask * log_prob).sum(1) / mask_pos_pairs
 
         # loss
         loss = -(self.temperature / self.base_temperature) * mean_log_prob_pos
-        loss = loss.view(anchor_count, batch_size).mean()
+        loss = loss.view(num_view, batch_size).mean()
 
         return loss
