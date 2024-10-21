@@ -14,20 +14,16 @@ class SigCLossBase(nn.Module):
     def __init__(
         self,
         cache_labels=False,
-        rank=0,
-        world_size=1,
         bidir=True,
-        use_horovod=False,
-        gather_batch=False,
         neg_weight=1,
+        fabric=None,
     ):
         super().__init__()
         self.cache_labels = cache_labels
-        self.rank = rank
-        self.world_size = world_size
-        self.use_horovod = use_horovod
+        self.fabric = fabric
+        self.rank = fabric.local_rank
+        self.world_size = fabric.world_size
         self.bidir = bidir
-        self.gather_batch = gather_batch
 
         # cache state
         self.prev_num_logits = 0
@@ -149,7 +145,7 @@ class SigCLossBase(nn.Module):
             **kwargs,
         )
 
-        if self.gather_batch and self.world_size > 1:
+        if self.world_size > 1:
             # exchange text features w/ neighbour world_size - 1 times
             right_rank = (self.rank + 1) % self.world_size
             left_rank = (self.rank - 1 + self.world_size) % self.world_size
@@ -180,6 +176,8 @@ class SigCLossBase(nn.Module):
                             first_label=first_label,
                             second_label=l_recv,
                             mask_diagonal=mask_diagonal,
+                            logit_scale=logit_scale,
+                            logit_bias=logit_bias,
                             **kwargs,
                         )
                     second_features_to_left, second_features_to_right = second_features_recv
@@ -201,6 +199,8 @@ class SigCLossBase(nn.Module):
                         first_label=first_label,
                         second_label=second_label_recv,
                         mask_diagonal=False,
+                        logit_scale=logit_scale,
+                        logit_bias=logit_bias,
                         **kwargs,
                     )
             else:
@@ -222,6 +222,8 @@ class SigCLossBase(nn.Module):
                         first_label=first_label,
                         second_label=second_label_from_left,
                         mask_diagonal=False,
+                        logit_scale=logit_scale,
+                        logit_bias=logit_bias,
                         **kwargs,
                     )
                     second_features_to_right = second_features_from_left

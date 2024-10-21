@@ -244,7 +244,9 @@ def set_model(opt, fabric):
             init_logit_bias=opt.init_logit_bias,
         )
         criterion = SigCLossNegWeight(
-            max_neg_weight=opt.max_neg_weight, neg_weight_step=opt.neg_weight_step
+            max_neg_weight=opt.max_neg_weight,
+            neg_weight_step=opt.neg_weight_step,
+            fabric=fabric,
         )
     elif opt.method.startswith("SigCLBase"):
         model = SigCLResNet(
@@ -252,7 +254,7 @@ def set_model(opt, fabric):
             init_logit_scale=opt.init_logit_scale,
             init_logit_bias=opt.init_logit_bias,
         )
-        criterion = SigCLossBase(neg_weight=opt.neg_weight)
+        criterion = SigCLossBase(neg_weight=opt.neg_weight, fabric=fabric)
 
     return model, criterion
 
@@ -292,7 +294,6 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
                 logit_scale=logit_scale,
                 logit_bias=logit_bias,
                 mask_diagonal=True,
-                fabric=fabric,
             )
             if opt.method == "SigCL":
                 criterion.step_neg_weight()
@@ -321,7 +322,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
 
         # print info
         if (idx + 1) % opt.print_freq == 0:
-            if opt.method == "SigCL" or opt.method == "SigCLPN":
+            if opt.method.startswith("SigCL"):
                 log_str = (
                     "Train: [{0}][{1}/{2}]\t"
                     "logit_scale {logit_scale:.3f}\t"
@@ -391,12 +392,12 @@ def main():
         print(f"epoch {epoch}, total time {time2 - time1:.2f}")
 
         # Calculate gradient norm
-        total_norm = 0
-        for p in model.parameters():
-            if p.grad is not None:
-                param_norm = p.grad.data.norm(2)
-                total_norm += param_norm.item() ** 2
-        total_norm = total_norm**0.5
+        # total_norm = 0
+        # for p in model.parameters():
+        #     if p.grad is not None:
+        #         param_norm = p.grad.data.norm(2)
+        #         total_norm += param_norm.item() ** 2
+        # total_norm = total_norm**0.5
 
         # Replace tensorboard logging with wandb logging
         if opt.log_wandb:
@@ -404,7 +405,7 @@ def main():
                 "epoch": epoch,
                 "loss": loss,
                 "learning_rate": optimizer.param_groups[0]["lr"],
-                "grad_norm": total_norm,
+                # "grad_norm": total_norm,
             }
             if opt.method.startswith("Sig"):
                 log_data.update(
