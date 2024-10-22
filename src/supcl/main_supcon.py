@@ -12,8 +12,7 @@ from dotenv import load_dotenv
 from lightning.fabric import Fabric
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
-
-import wandb
+from wandb.integration.lightning.fabric import WandbLogger
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -104,6 +103,8 @@ def parse_option():
     parser.add_argument(
         "--overfit_batch", action="store_true", help="train on a single batch for all epochs"
     )
+    parser.add_argument("--bidir", action="store_true", help="use bidirectional exchange")
+    parser.add_argument("--compile", action="store_true", help="use torch.compile")
 
     opt = parser.parse_args()
 
@@ -135,6 +136,11 @@ def parse_option():
 
     if opt.cosine:
         opt.model_name = f"{opt.model_name}_cosine"
+    if opt.method.startswith("SigCL"):
+        if opt.method.startswith("SigCLBase"):
+            opt.model_name = f"{opt.model_name}_base{opt.neg_weight}"
+        else:
+            opt.model_name = f"{opt.model_name}_neg{opt.max_neg_weight}"
 
     # warm-up for large-batch training,
     if opt.batch_size > 256:
@@ -156,15 +162,6 @@ def parse_option():
 
     # Load environment variables from .env file
     load_dotenv()
-
-    # Add wandb initialization
-    if opt.log_wandb:
-        wandb.init(
-            project=os.getenv("WANDB_PROJECT"),
-            name=opt.model_name,
-            config=vars(opt),
-            entity=os.getenv("WANDB_ENTITY"),
-        )
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):
@@ -254,7 +251,11 @@ def set_model(opt, fabric):
             init_logit_scale=opt.init_logit_scale,
             init_logit_bias=opt.init_logit_bias,
         )
-        criterion = SigCLossBase(neg_weight=opt.neg_weight, fabric=fabric)
+        criterion = SigCLossBase(neg_weight=opt.neg_weight, fabric=fabric, bidir=opt.bidir)
+
+    # Compile the model
+    if opt.compile:
+        model = torch.compile(model)
 
     return model, criterion
 
@@ -321,7 +322,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
         end = time.time()
 
         # print info
-        if (idx + 1) % opt.print_freq == 0:
+        if fabric.is_global_zero and (idx + 1) % opt.print_freq == 0:
             if opt.method.startswith("SigCL"):
                 log_str = (
                     "Train: [{0}][{1}/{2}]\t"
@@ -364,8 +365,20 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
 def main():
     opt = parse_option()
 
-    # Initialize Fabric
-    fabric = Fabric(accelerator="auto", devices="auto")
+    # Initialize logger
+    loggers = []
+    if opt.log_wandb:
+        loggers.append(
+            WandbLogger(
+                project=os.getenv("WANDB_PROJECT"),
+                name=opt.model_name,
+                config=vars(opt),
+                entity=os.getenv("WANDB_ENTITY"),
+            )
+        )
+
+    # Initialize Fabric with logger
+    fabric = Fabric(accelerator="auto", devices="auto", loggers=loggers)
     fabric.launch()
 
     # build data loader
@@ -391,30 +404,20 @@ def main():
         time2 = time.time()
         print(f"epoch {epoch}, total time {time2 - time1:.2f}")
 
-        # Calculate gradient norm
-        # total_norm = 0
-        # for p in model.parameters():
-        #     if p.grad is not None:
-        #         param_norm = p.grad.data.norm(2)
-        #         total_norm += param_norm.item() ** 2
-        # total_norm = total_norm**0.5
-
-        # Replace tensorboard logging with wandb logging
-        if opt.log_wandb:
-            log_data = {
-                "epoch": epoch,
-                "loss": loss,
-                "learning_rate": optimizer.param_groups[0]["lr"],
-                # "grad_norm": total_norm,
-            }
-            if opt.method.startswith("Sig"):
-                log_data.update(
-                    {
-                        "logit_scale": model.logit_scale.item(),
-                        "logit_bias": model.logit_bias.item(),
-                    }
-                )
-            wandb.log(log_data)
+        # Log metrics using Fabric's logger
+        log_data = {
+            "epoch": epoch,
+            "loss": loss,
+            "learning_rate": optimizer.param_groups[0]["lr"],
+        }
+        if opt.method.startswith("Sig"):
+            log_data.update(
+                {
+                    "logit_scale": model.logit_scale.item(),
+                    "logit_bias": model.logit_bias.item(),
+                }
+            )
+        fabric.log_dict(log_data, step=epoch)
 
         if epoch % opt.save_freq == 0:
             save_file = os.path.join(opt.save_folder, f"ckpt_epoch_{epoch}.pth")
@@ -423,10 +426,6 @@ def main():
     # save the last model
     save_file = os.path.join(opt.save_folder, "last.pth")
     save_model(model, optimizer, opt, opt.epochs, save_file)
-
-    # Close wandb run
-    if opt.log_wandb:
-        wandb.finish()
 
 
 if __name__ == "__main__":

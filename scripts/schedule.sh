@@ -35,6 +35,6 @@ CUDA_VISIBLE_DEVICES=3 $COMMAND & PID5=$!
 # CUDA_VISIBLE_DEVICES=5 python src/supcl/main_ce.py --batch_size $BATCH_SIZE --learning_rate 0.8 --cosine --warm --print_freq $PRINT_FREQ --epochs $EPOCHS --model $MODEL & PID6=$!
 
 # Wait for all background processes to finish
-wait $PID5 $PID2 $PID3 $PID4 # $PID5 $PID6
+wait $PID5 # $PID2 $PID3 $PID4 # $PID5 $PID6
 
 echo "All commands have finished executing."
