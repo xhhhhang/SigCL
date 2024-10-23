@@ -96,6 +96,7 @@ class SigCLossBase(nn.Module):
         logit_scale,
         logit_bias=None,
         mask_diagonal=False,
+        output_dict=False,
     ):
         loss_matrix = loss_info["loss_matrix"]
         pos_mask = loss_info["pos_mask"]
@@ -103,11 +104,26 @@ class SigCLossBase(nn.Module):
         num_pos = extra_info["num_pos"]
         num_neg = extra_info["num_neg"]
 
-        pos_loss = (loss_matrix * pos_mask).sum() / num_pos
-        neg_loss = (loss_matrix * neg_mask).sum() / num_neg
-        loss = pos_loss + neg_loss * self.neg_weight
+        pos_loss_sum = (loss_matrix * pos_mask).sum()
+        neg_loss_sum = (loss_matrix * neg_mask).sum()
+        if output_dict:
+            return {
+                "pos_loss_sum": pos_loss_sum,
+                "neg_loss_sum": neg_loss_sum,
+                "num_pos": num_pos,
+                "num_neg": num_neg,
+            }
+        else:
+            return pos_loss_sum / num_pos + neg_loss_sum / num_neg * self.neg_weight
 
-        return loss
+    @staticmethod
+    def sum_loss_dict(first_loss_dict, second_loss_dict):
+        return {
+            "pos_loss_sum": first_loss_dict["pos_loss_sum"] + second_loss_dict["pos_loss_sum"],
+            "neg_loss_sum": first_loss_dict["neg_loss_sum"] + second_loss_dict["neg_loss_sum"],
+            "num_pos": first_loss_dict["num_pos"] + second_loss_dict["num_pos"],
+            "num_neg": first_loss_dict["num_neg"] + second_loss_dict["num_neg"],
+        }
 
     def forward(
         self,
@@ -132,20 +148,36 @@ class SigCLossBase(nn.Module):
             mask_diagonal=mask_diagonal,
         )
 
-        loss = self._loss(
-            loss_info=loss_info,
-            extra_info=extra_info,
-            first_features=first_features,
-            second_features=second_features,
-            first_label=first_label,
-            second_label=second_label,
-            logit_scale=logit_scale,
-            logit_bias=logit_bias,
-            mask_diagonal=mask_diagonal,
-            **kwargs,
-        )
+        if self.world_size <= 1:
+            loss = self._loss(
+                loss_info=loss_info,
+                extra_info=extra_info,
+                first_features=first_features,
+                second_features=second_features,
+                first_label=first_label,
+                second_label=second_label,
+                logit_scale=logit_scale,
+                logit_bias=logit_bias,
+                mask_diagonal=mask_diagonal,
+                **kwargs,
+            )
 
-        if self.world_size > 1:
+            return loss if not output_dict else {**extra_info, "loss": loss}
+
+        else:
+            loss_dict = self._loss(
+                loss_info=loss_info,
+                extra_info=extra_info,
+                first_features=first_features,
+                second_features=second_features,
+                first_label=first_label,
+                second_label=second_label,
+                logit_scale=logit_scale,
+                logit_bias=logit_bias,
+                mask_diagonal=mask_diagonal,
+                output_dict=True,
+                **kwargs,
+            )
             # exchange text features w/ neighbour world_size - 1 times
             right_rank = (self.rank + 1) % self.world_size
             left_rank = (self.rank - 1 + self.world_size) % self.world_size
@@ -168,17 +200,21 @@ class SigCLossBase(nn.Module):
                     )
 
                     for f_recv, l_recv in zip(second_features_recv, second_label_recv):
-                        loss += self._loss(
-                            loss_info=loss_info,
-                            extra_info=extra_info,
-                            first_features=first_features,
-                            second_features=f_recv,
-                            first_label=first_label,
-                            second_label=l_recv,
-                            mask_diagonal=mask_diagonal,
-                            logit_scale=logit_scale,
-                            logit_bias=logit_bias,
-                            **kwargs,
+                        loss_dict = self.sum_loss_dict(
+                            loss_dict,
+                            self._loss(
+                                loss_info=loss_info,
+                                extra_info=extra_info,
+                                first_features=first_features,
+                                second_features=f_recv,
+                                first_label=first_label,
+                                second_label=l_recv,
+                                mask_diagonal=mask_diagonal,
+                                logit_scale=logit_scale,
+                                logit_bias=logit_bias,
+                                output_dict=True,
+                                **kwargs,
+                            )
                         )
                     second_features_to_left, second_features_to_right = second_features_recv
                     second_label_to_left, second_label_to_right = second_label_recv
@@ -191,17 +227,21 @@ class SigCLossBase(nn.Module):
                         left_rank, right_rank, second_label_to_right
                     )
 
-                    loss += self._loss(
-                        loss_info=loss_info,
-                        extra_info=extra_info,
-                        first_features=first_features,
-                        second_features=second_features_recv,
-                        first_label=first_label,
-                        second_label=second_label_recv,
-                        mask_diagonal=False,
-                        logit_scale=logit_scale,
-                        logit_bias=logit_bias,
-                        **kwargs,
+                    loss_dict = self.sum_loss_dict(
+                        loss_dict,
+                        self._loss(
+                            loss_info=loss_info,
+                            extra_info=extra_info,
+                            first_features=first_features,
+                            second_features=second_features_recv,
+                            first_label=first_label,
+                            second_label=second_label_recv,
+                            mask_diagonal=False,
+                            logit_scale=logit_scale,
+                            logit_bias=logit_bias,
+                            output_dict=True,
+                            **kwargs,
+                        )
                     )
             else:
                 second_features_to_right = second_features
@@ -214,19 +254,24 @@ class SigCLossBase(nn.Module):
                         left_rank, right_rank, second_label_to_right
                     )
 
-                    loss += self._loss(
-                        loss_info=loss_info,
-                        extra_info=extra_info,
-                        first_features=first_features,
-                        second_features=second_features_from_left,
-                        first_label=first_label,
-                        second_label=second_label_from_left,
-                        mask_diagonal=False,
-                        logit_scale=logit_scale,
-                        logit_bias=logit_bias,
-                        **kwargs,
+                    loss_dict = self.sum_loss_dict(
+                        loss_dict,
+                        self._loss(
+                            loss_info=loss_info,
+                            extra_info=extra_info,
+                            first_features=first_features,
+                            second_features=second_features_from_left,
+                            first_label=first_label,
+                            second_label=second_label_from_left,
+                            mask_diagonal=False,
+                            logit_scale=logit_scale,
+                            logit_bias=logit_bias,
+                            output_dict=True,
+                            **kwargs,
+                        )
                     )
                     second_features_to_right = second_features_from_left
                     second_label_to_right = second_label_from_left
 
-        return loss if not output_dict else {**extra_info, "loss": loss}
+            return loss_dict["pos_loss_sum"] / loss_dict["num_pos"] + loss_dict["neg_loss_sum"] / loss_dict["num_neg"] * self.neg_weight
+

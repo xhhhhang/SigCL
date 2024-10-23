@@ -148,7 +148,7 @@ def parse_option():
     if opt.warm:
         opt.model_name = f"{opt.model_name}_warm"
         opt.warmup_from = 0.01
-        opt.warm_epochs = 10
+        opt.warm_epochs = 50
         if opt.cosine:
             eta_min = opt.learning_rate * (opt.lr_decay_rate**3)
             opt.warmup_to = (
@@ -419,13 +419,14 @@ def main():
             )
         fabric.log_dict(log_data, step=epoch)
 
-        if epoch % opt.save_freq == 0:
+        if fabric.is_global_zero and epoch % opt.save_freq == 0:
             save_file = os.path.join(opt.save_folder, f"ckpt_epoch_{epoch}.pth")
             save_model(model, optimizer, opt, epoch, save_file)
 
     # save the last model
-    save_file = os.path.join(opt.save_folder, "last.pth")
-    save_model(model, optimizer, opt, opt.epochs, save_file)
+    if fabric.is_global_zero:
+        save_file = os.path.join(opt.save_folder, "last.pth")
+        save_model(model, optimizer, opt, opt.epochs, save_file)
 
 
 if __name__ == "__main__":

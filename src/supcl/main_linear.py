@@ -15,6 +15,7 @@ from util import (
     set_optimizer,
     warmup_learning_rate,
 )
+from tqdm import tqdm
 
 # Import wandb conditionally
 try:
@@ -302,7 +303,7 @@ def main():
     optimizer = set_optimizer(opt, classifier)
 
     # training routine
-    for epoch in range(1, opt.epochs + 1):
+    for epoch in tqdm(range(1, opt.epochs + 1)):
         adjust_learning_rate(opt, optimizer, epoch)
 
         # train for one epoch
