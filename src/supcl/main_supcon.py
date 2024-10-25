@@ -3,6 +3,7 @@ import math
 import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import rootutils
@@ -27,6 +28,7 @@ from util import (
     seed_everything,
     set_optimizer,
     warmup_learning_rate,
+    run_linear_eval,
 )
 
 from losses import SupConLoss
@@ -39,7 +41,7 @@ def parse_option():
     parser.add_argument("--print_freq", type=int, default=10, help="print frequency")
     parser.add_argument("--save_freq", type=int, default=50, help="save frequency")
     parser.add_argument("--batch_size", type=int, default=256, help="batch_size")
-    parser.add_argument("--num_workers", type=int, default=16, help="num of workers to use")
+    parser.add_argument("--num_workers", type=int, default=9, help="num of workers to use")
     parser.add_argument("--epochs", type=int, default=1000, help="number of training epochs")
 
     # optimization
@@ -113,7 +115,7 @@ def parse_option():
     parser.add_argument(
         "--logit_learning_rate", type=float, default=-1, help="learning rate for logit parameters"
     )
-
+    parser.add_argument("--linear_epochs", type=int, default=25, help="number of epochs for linear eval")
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
@@ -495,6 +497,37 @@ def main():
     if fabric.is_global_zero:
         save_file = os.path.join(opt.save_folder, "last.pth")
         save_model(model, optimizer, opt, opt.epochs, save_file)
+
+    # After training loop, run linear evaluation on saved checkpoints
+    if fabric.is_global_zero:
+        print("Running linear evaluation on saved checkpoints...")
+        checkpoint_dir = Path(opt.save_folder)
+        checkpoints = sorted(
+            checkpoint_dir.glob("ckpt_epoch_*.pth"),
+            key=lambda x: int(x.stem.split('_')[-1])
+        )
+        
+        # Also include the last checkpoint
+        last_checkpoint = checkpoint_dir / "last.pth"
+        if last_checkpoint.exists():
+            checkpoints.append(last_checkpoint)
+        
+        # Run linear eval on each checkpoint
+        for ckpt_path in checkpoints:
+            epoch = int(ckpt_path.stem.split('_')[-1]) if "last" not in str(ckpt_path) else opt.epochs
+            
+            # Run linear evaluation
+            val_acc = run_linear_eval(str(ckpt_path), opt)
+            
+            if val_acc is not None:
+                # Log the linear evaluation results
+                log_data = {
+                    "linear_eval/val_accuracy": val_acc,
+                    "linear_eval/epoch": epoch,
+                }
+                fabric.log_dict(log_data, step=epoch)
+                
+                print(f"Checkpoint {ckpt_path.name}: Linear evaluation accuracy = {val_acc:.2f}")
 
 
 if __name__ == "__main__":

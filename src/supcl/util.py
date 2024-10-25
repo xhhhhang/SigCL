@@ -1,6 +1,7 @@
 import math
 import os
 import random
+import subprocess
 
 import numpy as np
 import torch
@@ -152,3 +153,36 @@ def seed_everything(seed=42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
+
+def run_linear_eval(ckpt_path, opt):
+    """Run linear evaluation on a checkpoint and return the validation accuracy."""
+    linear_cmd = [
+        "python", "src/supcl/main_linear.py",
+        "--model", opt.model,
+        "--dataset", opt.dataset,
+        "--method", opt.method,
+        "--ckpt", ckpt_path,
+        "--batch_size", "1024",  # Using standard linear eval batch size
+        "--epochs", str(opt.linear_epochs),        # Standard number of epochs for linear eval
+        "--learning_rate", "5",  # Standard learning rate for linear eval
+        "--disable_progress"     # Disable progress to avoid cluttering logs
+    ]
+    
+    # Run the command and capture output
+    try:
+        result = subprocess.run(
+            linear_cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Extract accuracy from the output
+        # The output format is: "{method} {model} {dataset} best accuracy: {acc}"
+        output = result.stdout.strip()
+        acc = float(output.split("best accuracy: ")[-1])
+        return acc
+    except subprocess.CalledProcessError as e:
+        print(f"Linear evaluation failed: {e}")
+        return None
+
