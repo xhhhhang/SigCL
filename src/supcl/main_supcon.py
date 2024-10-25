@@ -11,7 +11,7 @@ import torch
 import torch.backends.cudnn as cudnn
 from dotenv import load_dotenv
 from lightning.fabric import Fabric
-from lightning.fabric.loggers import TensorBoardLogger
+from lightning.fabric.loggers import TensorBoardLogger, CSVLogger
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from tqdm import tqdm
@@ -421,6 +421,12 @@ def main():
         )
     if opt.log_tensorboard:
         loggers.append(TensorBoardLogger(opt.tb_path, name=opt.model_name))
+    
+    # Add default CSV logger if no other loggers are specified
+    if not loggers:
+        csv_save_path = os.path.join("./save/SupCon", opt.dataset + "_csv_logs")
+        loggers.append(CSVLogger(csv_save_path, name=opt.model_name))
+        print(f"No loggers specified. Using default CSV logger. Logs will be saved to: {csv_save_path}/{opt.model_name}")
 
     # Initialize Fabric with logger
     fabric = Fabric(accelerator="auto", devices="auto", precision="16-mixed", loggers=loggers)
