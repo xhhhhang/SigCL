@@ -11,7 +11,7 @@ import torch
 import torch.backends.cudnn as cudnn
 from dotenv import load_dotenv
 from lightning.fabric import Fabric
-from lightning.fabric.loggers import TensorBoardLogger, CSVLogger
+from lightning.fabric.loggers import CSVLogger, TensorBoardLogger
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from tqdm import tqdm
@@ -24,11 +24,11 @@ from util import (
     AverageMeter,
     TwoCropTransform,
     adjust_learning_rate,
+    run_linear_eval,
     save_model,
     seed_everything,
     set_optimizer,
     warmup_learning_rate,
-    run_linear_eval,
 )
 
 from losses import SupConLoss
@@ -115,7 +115,9 @@ def parse_option():
     parser.add_argument(
         "--logit_learning_rate", type=float, default=-1, help="learning rate for logit parameters"
     )
-    parser.add_argument("--linear_epochs", type=int, default=25, help="number of epochs for linear eval")
+    parser.add_argument(
+        "--linear_epochs", type=int, default=25, help="number of epochs for linear eval"
+    )
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
@@ -421,12 +423,10 @@ def main():
         )
     if opt.log_tensorboard:
         loggers.append(TensorBoardLogger(opt.tb_path, name=opt.model_name))
-    
-    # Add default CSV logger if no other loggers are specified
-    if not loggers:
-        csv_save_path = os.path.join("./save/SupCon", opt.dataset + "_csv_logs")
-        loggers.append(CSVLogger(csv_save_path, name=opt.model_name))
-        print(f"No loggers specified. Using default CSV logger. Logs will be saved to: {csv_save_path}/{opt.model_name}")
+
+    # default csv logger
+    csv_save_path = os.path.join("./save/SupCon", opt.dataset + "_csv_logs")
+    loggers.append(CSVLogger(csv_save_path, name=opt.model_name))
 
     # Initialize Fabric with logger
     fabric = Fabric(accelerator="auto", devices="auto", precision="16-mixed", loggers=loggers)
@@ -509,22 +509,23 @@ def main():
         print("Running linear evaluation on saved checkpoints...")
         checkpoint_dir = Path(opt.save_folder)
         checkpoints = sorted(
-            checkpoint_dir.glob("ckpt_epoch_*.pth"),
-            key=lambda x: int(x.stem.split('_')[-1])
+            checkpoint_dir.glob("ckpt_epoch_*.pth"), key=lambda x: int(x.stem.split("_")[-1])
         )
-        
+
         # Also include the last checkpoint
         last_checkpoint = checkpoint_dir / "last.pth"
         if last_checkpoint.exists():
             checkpoints.append(last_checkpoint)
-        
+
         # Run linear eval on each checkpoint
         for ckpt_path in checkpoints:
-            epoch = int(ckpt_path.stem.split('_')[-1]) if "last" not in str(ckpt_path) else opt.epochs
-            
+            epoch = (
+                int(ckpt_path.stem.split("_")[-1]) if "last" not in str(ckpt_path) else opt.epochs
+            )
+
             # Run linear evaluation
             val_acc = run_linear_eval(str(ckpt_path), opt)
-            
+
             if val_acc is not None:
                 # Log the linear evaluation results
                 log_data = {
@@ -532,7 +533,7 @@ def main():
                     "linear_eval/epoch": epoch,
                 }
                 fabric.log_dict(log_data, step=epoch)
-                
+
                 print(f"Checkpoint {ckpt_path.name}: Linear evaluation accuracy = {val_acc:.2f}")
 
 

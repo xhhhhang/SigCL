@@ -31,7 +31,7 @@ def parse_option():
     parser.add_argument("--print_freq", type=int, default=10, help="print frequency")
     parser.add_argument("--save_freq", type=int, default=50, help="save frequency")
     parser.add_argument("--batch_size", type=int, default=256, help="batch_size")
-    parser.add_argument("--num_workers", type=int, default=16, help="num of workers to use")
+    parser.add_argument("--num_workers", type=int, default=8, help="num of workers to use")
     parser.add_argument("--epochs", type=int, default=100, help="number of training epochs")
 
     # optimization
@@ -282,7 +282,7 @@ def main():
     best_acc = 0
     opt = parse_option()
 
-    seed_everything(42)
+    seed_everything(opt.seed)
 
     # Initialize wandb if enabled and progress is not disabled
     if opt.log_wandb and not opt.disable_progress:
