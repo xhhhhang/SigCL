@@ -8,14 +8,15 @@ import torch
 import torch.backends.cudnn as cudnn
 from main_ce import set_loader
 from networks.resnet_big import LinearClassifier, SigCLResNet, SupConResNet
+from tqdm import tqdm
 from util import (
     AverageMeter,
     accuracy,
     adjust_learning_rate,
+    seed_everything,
     set_optimizer,
     warmup_learning_rate,
 )
-from tqdm import tqdm
 
 # Import wandb conditionally
 try:
@@ -280,6 +281,8 @@ def validate(val_loader, model, classifier, criterion, opt):
 def main():
     best_acc = 0
     opt = parse_option()
+
+    seed_everything(42)
 
     # Initialize wandb if enabled and progress is not disabled
     if opt.log_wandb and not opt.disable_progress:
