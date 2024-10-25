@@ -33,7 +33,7 @@ dependencies:
   - open_clip_torch=2.*
 
   # --------- loggers --------- #
-  # - wandb
+  - wandb
   # - neptune-client
   # - mlflow
   # - comet-ml
@@ -44,3 +44,4 @@ dependencies:
       - hydra-optuna-sweeper
       - hydra-colorlog
       - rootutils
+      - tensorboard

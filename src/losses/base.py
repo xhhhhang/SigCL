@@ -273,5 +273,6 @@ class SigCLossBase(nn.Module):
                     second_features_to_right = second_features_from_left
                     second_label_to_right = second_label_from_left
 
+            # print(f"pos num: {loss_dict['num_pos']}, neg num: {loss_dict['num_neg']}")
             return loss_dict["pos_loss_sum"] / loss_dict["num_pos"] + loss_dict["neg_loss_sum"] / loss_dict["num_neg"] * self.neg_weight
 
