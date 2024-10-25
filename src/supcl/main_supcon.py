@@ -453,7 +453,7 @@ def main():
     for epoch in range(1, opt.epochs + 1):
         if isinstance(optimizer, dict):
             adjust_learning_rate(opt, optimizer["main"], epoch)
-            adjust_learning_rate(opt, optimizer["logit"], epoch, logit_optimizer=True)
+            # adjust_learning_rate(opt, optimizer["logit"], epoch, logit_optimizer=True)
         else:
             adjust_learning_rate(opt, optimizer, epoch)
 
