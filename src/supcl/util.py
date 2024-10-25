@@ -1,4 +1,6 @@
 import math
+import os
+import random
 
 import numpy as np
 import torch
@@ -52,8 +54,11 @@ def accuracy(output, target, topk=(1,)):
         return res
 
 
-def adjust_learning_rate(args, optimizer, epoch):
-    lr = args.learning_rate
+def adjust_learning_rate(args, optimizer, epoch, logit_optimizer=False):
+    if logit_optimizer:
+        lr = args.logit_learning_rate
+    else:
+        lr = args.learning_rate
     if args.cosine:
         eta_min = lr * (args.lr_decay_rate**3)
         lr = eta_min + (lr - eta_min) * (1 + math.cos(math.pi * epoch / args.epochs)) / 2
@@ -66,23 +71,61 @@ def adjust_learning_rate(args, optimizer, epoch):
         param_group["lr"] = lr
 
 
-def warmup_learning_rate(args, epoch, batch_id, total_batches, optimizer):
+def warmup_learning_rate(args, epoch, batch_id, total_batches, optimizer, logit_optimizer=False):
     if args.warm and epoch <= args.warm_epochs:
         p = (batch_id + (epoch - 1) * total_batches) / (args.warm_epochs * total_batches)
-        lr = args.warmup_from + p * (args.warmup_to - args.warmup_from)
-
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = lr
+        if not logit_optimizer:
+            lr = args.warmup_from + p * (args.warmup_to - args.warmup_from)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr
+        else:
+            lr = args.warmup_from + p * (args.warmup_to_logit - args.warmup_from)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr
 
 
 def set_optimizer(opt, model):
-    optimizer = optim.SGD(
-        model.parameters(),
-        lr=opt.learning_rate,
-        momentum=opt.momentum,
-        weight_decay=opt.weight_decay,
-    )
-    return optimizer
+    if (
+        hasattr(model, "logit_scale") and opt.logit_learning_rate != -1
+    ):  # Check if it's a SigCLResNet model
+        # Separate parameters into two groups
+        logit_params = []
+        logit_names = []
+        other_params = []
+        for name, param in model.named_parameters():
+            if "logit_" in name:
+                logit_names.append(name)
+                logit_params.append(param)
+            else:
+                other_params.append(param)
+
+        print(
+            f"SigCL model detected, setting up separate optimizers for main({opt.learning_rate}) and logit({opt.logit_learning_rate}){logit_names} parameters."
+        )
+        # Create two optimizers with different learning rates
+        optimizers = {
+            "main": optim.SGD(
+                other_params,
+                lr=opt.learning_rate,
+                momentum=opt.momentum,
+                weight_decay=opt.weight_decay,
+            ),
+            "logit": optim.SGD(
+                logit_params,
+                lr=opt.logit_learning_rate,  # Lower learning rate for logit parameters
+                # momentum=0,
+                # weight_decay=0  # No weight decay for logit parameters
+            ),
+        }
+        return optimizers
+    else:
+        # Original optimizer setup for non-SigCL models
+        return optim.SGD(
+            model.parameters(),
+            lr=opt.learning_rate,
+            momentum=opt.momentum,
+            weight_decay=opt.weight_decay,
+        )
 
 
 def save_model(model, optimizer, opt, epoch, save_file):
@@ -90,8 +133,22 @@ def save_model(model, optimizer, opt, epoch, save_file):
     state = {
         "opt": opt,
         "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
         "epoch": epoch,
     }
+    if opt.logit_learning_rate != -1:
+        state["optimizer"] = optimizer["main"].state_dict()
+        state["optimizer_logit"] = optimizer["logit"].state_dict()
+    else:
+        state["optimizer"] = optimizer.state_dict()
+
     torch.save(state, save_file)
     del state
+
+
+def seed_everything(seed=42):
+    random.seed(seed)
+    os.environ["PYHTONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True

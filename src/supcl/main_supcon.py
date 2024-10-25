@@ -10,8 +10,10 @@ import torch
 import torch.backends.cudnn as cudnn
 from dotenv import load_dotenv
 from lightning.fabric import Fabric
+from lightning.fabric.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
+from tqdm import tqdm
 from wandb.integration.lightning.fabric import WandbLogger
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
@@ -22,6 +24,7 @@ from util import (
     TwoCropTransform,
     adjust_learning_rate,
     save_model,
+    seed_everything,
     set_optimizer,
     warmup_learning_rate,
 )
@@ -96,6 +99,7 @@ def parse_option():
     parser.add_argument("--max_neg_weight", type=int, default=16, help="maximum negative weight")
     parser.add_argument("--neg_weight", type=float, default=1, help="negative weight")
     parser.add_argument("--log_wandb", action="store_true", help="log to wandb")
+    parser.add_argument("--log_tensorboard", action="store_true", help="log to tensorboard")
     parser.add_argument(
         "--init_logit_scale", type=float, default=np.log(10), help="initial logit scale"
     )
@@ -105,6 +109,10 @@ def parse_option():
     )
     parser.add_argument("--bidir", action="store_true", help="use bidirectional exchange")
     parser.add_argument("--compile", action="store_true", help="use torch.compile")
+    parser.add_argument("--seed", type=int, default=42, help="random seed")
+    parser.add_argument(
+        "--logit_learning_rate", type=float, default=-1, help="learning rate for logit parameters"
+    )
 
     opt = parser.parse_args()
 
@@ -138,9 +146,9 @@ def parse_option():
         opt.model_name = f"{opt.model_name}_cosine"
     if opt.method.startswith("SigCL"):
         if opt.method.startswith("SigCLBase"):
-            opt.model_name = f"{opt.model_name}_base{opt.neg_weight}"
+            opt.model_name = f"{opt.model_name}_base_{opt.neg_weight}"
         else:
-            opt.model_name = f"{opt.model_name}_neg{opt.max_neg_weight}"
+            opt.model_name = f"{opt.model_name}_neg_{opt.max_neg_weight}"
 
     # warm-up for large-batch training,
     if opt.batch_size > 256:
@@ -148,7 +156,7 @@ def parse_option():
     if opt.warm:
         opt.model_name = f"{opt.model_name}_warm"
         opt.warmup_from = 0.01
-        opt.warm_epochs = 50
+        opt.warm_epochs = 10
         if opt.cosine:
             eta_min = opt.learning_rate * (opt.lr_decay_rate**3)
             opt.warmup_to = (
@@ -157,8 +165,18 @@ def parse_option():
                 * (1 + math.cos(math.pi * opt.warm_epochs / opt.epochs))
                 / 2
             )
+            if opt.logit_learning_rate != -1:
+                eta_min_logit = opt.logit_learning_rate * (opt.lr_decay_rate**3)
+                opt.warmup_to_logit = (
+                    eta_min_logit
+                    + (opt.logit_learning_rate - eta_min_logit)
+                    * (1 + math.cos(math.pi * opt.warm_epochs / opt.epochs))
+                    / 2
+                )
         else:
             opt.warmup_to = opt.learning_rate
+            if opt.logit_learning_rate != -1:
+                opt.warmup_to_logit = opt.logit_learning_rate
 
     # Load environment variables from .env file
     load_dotenv()
@@ -178,6 +196,9 @@ def set_loader(opt):
     elif opt.dataset == "cifar100":
         mean = (0.5071, 0.4867, 0.4408)
         std = (0.2675, 0.2565, 0.2761)
+    elif opt.dataset == "imagenet":
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
     elif opt.dataset == "path":
         mean = float(opt.mean)
         std = float(opt.std)
@@ -203,6 +224,10 @@ def set_loader(opt):
     elif opt.dataset == "cifar100":
         train_dataset = datasets.CIFAR100(
             root=opt.data_folder, transform=TwoCropTransform(train_transform), download=True
+        )
+    elif opt.dataset == "imagenet":
+        train_dataset = datasets.ImageNet(
+            root=opt.data_folder, transform=TwoCropTransform(train_transform), split="train"
         )
     elif opt.dataset == "path":
         train_dataset = datasets.ImageFolder(
@@ -276,7 +301,13 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
         bsz = labels.shape[0]
 
         # warm-up learning rate
-        warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
+        if isinstance(optimizer, dict):
+            warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer["main"])
+            warmup_learning_rate(
+                opt, epoch, idx, len(train_loader), optimizer["logit"], logit_optimizer=True
+            )
+        else:
+            warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
         if opt.method.startswith("SigCL"):
@@ -314,8 +345,14 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
 
         # SGD
         fabric.backward(loss)
-        optimizer.step()
-        optimizer.zero_grad()
+        if isinstance(optimizer, dict):
+            optimizer["main"].step()
+            optimizer["logit"].step()
+            optimizer["main"].zero_grad()
+            optimizer["logit"].zero_grad()
+        else:
+            optimizer.step()
+            optimizer.zero_grad()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -323,28 +360,30 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
 
         # print info
         if fabric.is_global_zero and (idx + 1) % opt.print_freq == 0:
-            if opt.method.startswith("SigCL"):
+            if opt.method.startswith("SigCLBase"):
                 log_str = (
+                    "Base {neg_weight}\t"
                     "Train: [{0}][{1}/{2}]\t"
                     "logit_scale {logit_scale:.3f}\t"
                     "logit_bias {logit_bias:.3f}\t"
                     "loss {loss.val:.5f} ({loss.avg:.5f})"
                 )
-                if opt.method == "SigCL":
-                    log_str = "neg_weight {neg_weight:.5f}\t" + log_str
                 print(
                     log_str.format(
                         epoch,
                         idx + 1,
                         len(train_loader),
-                        neg_weight=criterion.neg_weight if opt.method == "SigCL" else None,
                         logit_scale=logit_scale.item(),
                         logit_bias=logit_bias.item(),
                         loss=losses,
+                        neg_weight=opt.neg_weight
+                        if opt.method.startswith("SigCLBase")
+                        else criterion.neg_weight,
                     )
                 )
             else:
                 print(
+                    "{method}\t"
                     "Train: [{0}][{1}/{2}]\t"
                     "BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
                     "DT {data_time.val:.3f} ({data_time.avg:.3f})\t"
@@ -355,6 +394,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
                         batch_time=batch_time,
                         data_time=data_time,
                         loss=losses,
+                        method=opt.method,
                     )
                 )
             sys.stdout.flush()
@@ -364,6 +404,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
 
 def main():
     opt = parse_option()
+    seed_everything(opt.seed)
 
     # Initialize logger
     loggers = []
@@ -376,40 +417,67 @@ def main():
                 entity=os.getenv("WANDB_ENTITY"),
             )
         )
+    if opt.log_tensorboard:
+        loggers.append(TensorBoardLogger(opt.tb_path, name=opt.model_name))
 
     # Initialize Fabric with logger
-    fabric = Fabric(accelerator="auto", devices="auto", loggers=loggers)
+    fabric = Fabric(accelerator="auto", devices="auto", precision="16-mixed", loggers=loggers)
     fabric.launch()
 
     # build data loader
     train_loader = set_loader(opt)
 
+    # neg_weight as real distribution
+    if opt.method.startswith("SigCLBase") and opt.neg_weight == -1:
+        pass
+
     # build model and criterion
     model, criterion = set_model(opt, fabric)
+    # model = torch.compile(model)
 
     # build optimizer
     optimizer = set_optimizer(opt, model)
 
     # Setup model, optimizer, and dataloader with Fabric
-    model, optimizer = fabric.setup(model, optimizer)
+    if isinstance(optimizer, dict):
+        model, optimizer_main, optimizer_logit = fabric.setup(
+            model, optimizer["main"], optimizer["logit"]
+        )
+        optimizer = {"main": optimizer_main, "logit": optimizer_logit}
+    else:
+        model, optimizer = fabric.setup(model, optimizer)
+
     train_loader = fabric.setup_dataloaders(train_loader)
 
     # training routine
     for epoch in range(1, opt.epochs + 1):
-        adjust_learning_rate(opt, optimizer, epoch)
+        if isinstance(optimizer, dict):
+            adjust_learning_rate(opt, optimizer["main"], epoch)
+            adjust_learning_rate(opt, optimizer["logit"], epoch, logit_optimizer=True)
+        else:
+            adjust_learning_rate(opt, optimizer, epoch)
 
         # train for one epoch
         time1 = time.time()
         loss = train(fabric, train_loader, model, criterion, optimizer, epoch, opt)
         time2 = time.time()
-        print(f"epoch {epoch}, total time {time2 - time1:.2f}")
+        if fabric.is_global_zero:
+            print(f"epoch {epoch}, total time {time2 - time1:.2f}")
 
         # Log metrics using Fabric's logger
         log_data = {
             "epoch": epoch,
             "loss": loss,
-            "learning_rate": optimizer.param_groups[0]["lr"],
         }
+        if isinstance(optimizer, dict):
+            log_data.update(
+                {
+                    "learning_rate": optimizer["main"].param_groups[0]["lr"],
+                    "learning_rate_logit": optimizer["logit"].param_groups[0]["lr"],
+                }
+            )
+        else:
+            log_data.update({"learning_rate": optimizer.param_groups[0]["lr"]})
         if opt.method.startswith("Sig"):
             log_data.update(
                 {
