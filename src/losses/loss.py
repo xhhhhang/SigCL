@@ -1,6 +1,5 @@
 from .base import SigCLossBase
 
-
 # class SigCLossPN(SigCLossBase):
 #     def _loss(self, loss_info, extra_info, first_features, **kwargs):
 #         loss_matrix = loss_info["loss_matrix"]
@@ -56,3 +55,8 @@ class SigCLossNegWeight(SigCLossBase):
         self.neg_weight *= self.neg_weight_step
         if self.neg_weight > self.max_neg_weight:
             self.neg_weight = self.max_neg_weight
+
+
+class SigCLossAverage(SigCLossBase):
+    def _loss(self, *args, **kwargs):
+        super()._loss(**args, **kwargs, output_dict=True)

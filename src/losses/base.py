@@ -85,6 +85,12 @@ class SigCLossBase(nn.Module):
         }
         return loss_info, extra_info
 
+    def _aggregate_loss(self, loss_dict):
+        return (
+            loss_dict["pos_loss_sum"] / loss_dict["num_pos"]
+            + loss_dict["neg_loss_sum"] / loss_dict["num_neg"] * self.neg_weight
+        )
+
     def _loss(
         self,
         loss_info,
@@ -96,7 +102,6 @@ class SigCLossBase(nn.Module):
         logit_scale,
         logit_bias=None,
         mask_diagonal=False,
-        output_dict=False,
     ):
         loss_matrix = loss_info["loss_matrix"]
         pos_mask = loss_info["pos_mask"]
@@ -106,15 +111,12 @@ class SigCLossBase(nn.Module):
 
         pos_loss_sum = (loss_matrix * pos_mask).sum()
         neg_loss_sum = (loss_matrix * neg_mask).sum()
-        if output_dict:
-            return {
-                "pos_loss_sum": pos_loss_sum,
-                "neg_loss_sum": neg_loss_sum,
-                "num_pos": num_pos,
-                "num_neg": num_neg,
-            }
-        else:
-            return pos_loss_sum / num_pos + neg_loss_sum / num_neg * self.neg_weight
+        return {
+            "pos_loss_sum": pos_loss_sum,
+            "neg_loss_sum": neg_loss_sum,
+            "num_pos": num_pos,
+            "num_neg": num_neg,
+        }
 
     @staticmethod
     def sum_loss_dict(first_loss_dict, second_loss_dict):
@@ -149,7 +151,7 @@ class SigCLossBase(nn.Module):
         )
 
         if self.world_size <= 1:
-            loss = self._loss(
+            loss_dict = self._loss(
                 loss_info=loss_info,
                 extra_info=extra_info,
                 first_features=first_features,
@@ -161,7 +163,7 @@ class SigCLossBase(nn.Module):
                 mask_diagonal=mask_diagonal,
                 **kwargs,
             )
-
+            loss = self._aggregate_loss(loss_dict)
             return loss if not output_dict else {**extra_info, "loss": loss}
 
         else:
@@ -175,7 +177,6 @@ class SigCLossBase(nn.Module):
                 logit_scale=logit_scale,
                 logit_bias=logit_bias,
                 mask_diagonal=mask_diagonal,
-                output_dict=True,
                 **kwargs,
             )
             # exchange text features w/ neighbour world_size - 1 times
@@ -212,9 +213,8 @@ class SigCLossBase(nn.Module):
                                 mask_diagonal=mask_diagonal,
                                 logit_scale=logit_scale,
                                 logit_bias=logit_bias,
-                                output_dict=True,
                                 **kwargs,
-                            )
+                            ),
                         )
                     second_features_to_left, second_features_to_right = second_features_recv
                     second_label_to_left, second_label_to_right = second_label_recv
@@ -239,9 +239,8 @@ class SigCLossBase(nn.Module):
                             mask_diagonal=False,
                             logit_scale=logit_scale,
                             logit_bias=logit_bias,
-                            output_dict=True,
                             **kwargs,
-                        )
+                        ),
                     )
             else:
                 second_features_to_right = second_features
@@ -266,13 +265,11 @@ class SigCLossBase(nn.Module):
                             mask_diagonal=False,
                             logit_scale=logit_scale,
                             logit_bias=logit_bias,
-                            output_dict=True,
                             **kwargs,
-                        )
+                        ),
                     )
                     second_features_to_right = second_features_from_left
                     second_label_to_right = second_label_from_left
 
             # print(f"pos num: {loss_dict['num_pos']}, neg num: {loss_dict['num_neg']}")
-            return loss_dict["pos_loss_sum"] / loss_dict["num_pos"] + loss_dict["neg_loss_sum"] / loss_dict["num_neg"] * self.neg_weight
-
+            return self._aggregate_loss(loss_dict)
