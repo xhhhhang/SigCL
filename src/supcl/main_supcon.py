@@ -206,7 +206,7 @@ def parse_option():
     return opt
 
 
-def set_loader(opt):
+def set_loader(opt, fabric):
     # construct data loader
     if opt.dataset == "cifar10":
         mean = (0.4914, 0.4822, 0.4465)
@@ -235,24 +235,47 @@ def set_loader(opt):
         ]
     )
 
-    if opt.dataset == "cifar10":
-        train_dataset = datasets.CIFAR10(
-            root=opt.data_folder, transform=TwoCropTransform(train_transform), download=True
-        )
-    elif opt.dataset == "cifar100":
-        train_dataset = datasets.CIFAR100(
-            root=opt.data_folder, transform=TwoCropTransform(train_transform), download=True
-        )
-    elif opt.dataset == "imagenet":
-        train_dataset = datasets.ImageNet(
-            root=opt.data_folder, transform=TwoCropTransform(train_transform), split="train"
-        )
-    elif opt.dataset == "path":
-        train_dataset = datasets.ImageFolder(
-            root=opt.data_folder, transform=TwoCropTransform(train_transform)
-        )
-    else:
-        raise ValueError(opt.dataset)
+    # Ensure only local rank 0 downloads the dataset
+    if fabric.local_rank == 0:
+        if opt.dataset == "cifar10":
+            train_dataset = datasets.CIFAR10(
+                root=opt.data_folder, transform=TwoCropTransform(train_transform), download=True
+            )
+        elif opt.dataset == "cifar100":
+            train_dataset = datasets.CIFAR100(
+                root=opt.data_folder, transform=TwoCropTransform(train_transform), download=True
+            )
+        elif opt.dataset == "imagenet":
+            train_dataset = datasets.ImageNet(
+                root=opt.data_folder, transform=TwoCropTransform(train_transform), split="train"
+            )
+        elif opt.dataset == "path":
+            train_dataset = datasets.ImageFolder(
+                root=opt.data_folder, transform=TwoCropTransform(train_transform)
+            )
+    
+    # Make all processes wait for rank 0 to finish downloading
+    if fabric.world_size > 1:
+        fabric.barrier()
+    
+    # Now all processes can load the dataset without downloading
+    if fabric.local_rank != 0:
+        if opt.dataset == "cifar10":
+            train_dataset = datasets.CIFAR10(
+                root=opt.data_folder, transform=TwoCropTransform(train_transform), download=False
+            )
+        elif opt.dataset == "cifar100":
+            train_dataset = datasets.CIFAR100(
+                root=opt.data_folder, transform=TwoCropTransform(train_transform), download=False
+            )
+        elif opt.dataset == "imagenet":
+            train_dataset = datasets.ImageNet(
+                root=opt.data_folder, transform=TwoCropTransform(train_transform), split="train"
+            )
+        elif opt.dataset == "path":
+            train_dataset = datasets.ImageFolder(
+                root=opt.data_folder, transform=TwoCropTransform(train_transform)
+            )
 
     if opt.overfit_batch:
         # Create a subset with only one batch
@@ -459,6 +482,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
 def main():
     opt = parse_option()
     seed_everything(opt.seed)
+    # torch.set_float32_matmul_precision("high")
 
     # Initialize logger
     loggers = []
@@ -483,7 +507,7 @@ def main():
     fabric.launch()
 
     # build data loader
-    train_loader = set_loader(opt)
+    train_loader = set_loader(opt, fabric)
 
     # neg_weight as real distribution
     if opt.method.startswith("SigCLBase") and opt.neg_weight == -1:
