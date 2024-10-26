@@ -10,8 +10,9 @@ LOGIT_LEARNING_RATE=0.2
 BATCH_SIZE=3076
 PRINT_FREQ=17
 EPOCHS=700
+LINEAR_EPOCHS=50
 
-COMMAND="python src/supcl/main_supcon.py --linear_epochs 50 --batch_size $BATCH_SIZE --learning_rate $LEARNING_RATE --logit_learning_rate $LOGIT_LEARNING_RATE --temp 0.1 --cosine --warm --model $MODEL --print_freq $PRINT_FREQ --epochs $EPOCHS --dataset $DATASET"
+COMMAND="python src/supcl/main_supcon.py --linear_epochs $LINEAR_EPOCHS --batch_size $BATCH_SIZE --learning_rate $LEARNING_RATE --logit_learning_rate $LOGIT_LEARNING_RATE --temp 0.1 --cosine --warm --model $MODEL --print_freq $PRINT_FREQ --epochs $EPOCHS --dataset $DATASET"
 
 # Append any extra arguments to the command
 EXTRA_ARGS="$@"
