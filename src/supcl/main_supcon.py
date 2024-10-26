@@ -34,6 +34,7 @@ from util import (
 
 from losses import SupConLoss
 from src.losses.loss import (
+    ExpAverage,
     FocalAverage,
     FocalBase,
     SigCLossAverage,
@@ -253,7 +254,7 @@ def set_loader(opt):
         )
     else:
         raise ValueError(opt.dataset)
-
+    
     if opt.overfit_batch:
         # Create a subset with only one batch
         subset_indices = list(range(opt.batch_size))
@@ -303,6 +304,9 @@ def set_model(opt, fabric):
         elif opt.method == "SigCLBaseAvgV2":
             print(f"Using SigCLBaseAvgV2: {opt.neg_weight}")
             criterion_class = SigCLossAverageV2
+        elif opt.method == "SigCLBaseExp":
+            print(f"Using SigCLBaseExp: {opt.neg_weight}")
+            criterion_class = ExpAverage
         else:
             print(f"Using SigCLBase: {opt.neg_weight}")
             criterion_class = SigCLossBase
