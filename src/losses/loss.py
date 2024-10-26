@@ -125,3 +125,41 @@ class FocalBase(SigCLossBase):
 
 class FocalAverage(FocalBase, SigCLossAverageV2):
     pass
+
+class ExpBase(SigCLossBase):
+    def _loss(
+        self,
+        loss_info,
+        extra_info,
+        first_features,
+        second_features,
+        first_label,
+        second_label,
+        logit_scale,
+        logit_bias=None,
+        mask_diagonal=False,
+    ):
+        logits = loss_info["logits"]
+        pos_mask = loss_info["pos_mask"]
+        neg_mask = loss_info["neg_mask"]
+        labels = loss_info["labels"]
+        loss_matrix = loss_info["loss_matrix"]
+
+        p = torch.sigmoid(logits * labels)
+        focal_weight = 10 ** p
+        loss_matrix = loss_matrix * focal_weight
+
+        pos_loss_sum = (loss_matrix * pos_mask).sum()
+        neg_loss_sum = (loss_matrix * neg_mask).sum()
+        num_pos = pos_mask.sum().clamp(min=1)
+        num_neg = neg_mask.sum().clamp(min=1)
+
+        return {
+            "pos_loss_sum": pos_loss_sum,
+            "neg_loss_sum": neg_loss_sum,
+            "num_pos": num_pos,
+            "num_neg": num_neg,
+        }
+
+class ExpAverage(ExpBase, SigCLossAverageV2):
+    pass
