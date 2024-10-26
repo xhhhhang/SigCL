@@ -33,7 +33,7 @@ from util import (
 )
 
 from losses import SupConLoss
-from src.losses.loss import SigCLossBase, SigCLossNegWeight
+from src.losses.loss import SigCLossBase, SigCLossNegWeight, SigCLossAverage, SigCLossRatio, SigCLossAverageV2, FocalBase, FocalAverage
 
 
 def parse_option():
@@ -122,6 +122,7 @@ def parse_option():
     parser.add_argument(
         "--skip_train", action="store_true", help="skip training and only run linear eval"
     )
+    parser.add_argument("--gamma", type=float, default=2.0, help="gamma for focal loss")
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
@@ -284,7 +285,37 @@ def set_model(opt, fabric):
             init_logit_scale=opt.init_logit_scale,
             init_logit_bias=opt.init_logit_bias,
         )
-        criterion = SigCLossBase(neg_weight=opt.neg_weight, fabric=fabric, bidir=opt.bidir)
+        if opt.method == 'SigCLBaseAvg':
+            print(f"Using SigCLBaseAvg: {opt.neg_weight}")
+            criterion_class = SigCLossAverage
+        elif opt.method == 'SigCLBaseRatio':
+            print(f"Using SigCLBaseRatio: {opt.neg_weight}")
+            criterion_class = SigCLossRatio
+        elif opt.method == 'SigCLBaseAvgV2':
+            print(f"Using SigCLBaseAvgV2: {opt.neg_weight}")
+            criterion_class = SigCLossAverageV2
+        else:
+            print(f"Using SigCLBase: {opt.neg_weight}")
+            criterion_class = SigCLossBase
+
+        criterion = criterion_class(neg_weight=opt.neg_weight, fabric=fabric, bidir=opt.bidir)
+
+    elif opt.method.startswith("Focal"):
+        model = SigCLResNet(
+            name=opt.model,
+            init_logit_scale=opt.init_logit_scale,
+            init_logit_bias=opt.init_logit_bias,
+        )
+        if opt.method == 'FocalBase':
+            print(f"Using FocalBase: {opt.neg_weight}")
+            criterion_class = FocalBase
+        elif opt.method == 'FocalAverage':
+            print(f"Using FocalAverage: {opt.neg_weight}")
+            criterion_class = FocalAverage
+        else:
+            raise ValueError(f"Focal method not supported: {opt.method}")
+
+        criterion = criterion_class(gamma=opt.gamma, neg_weight=opt.neg_weight, fabric=fabric, bidir=opt.bidir)
 
     # Compile the model
     if opt.compile:
@@ -318,7 +349,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
             warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
-        if opt.method.startswith("SigCL"):
+        if opt.method.startswith("SigCL") or opt.method.startswith("Focal"):
             model_out = model(images)
 
             features = model_out["features"]
@@ -368,7 +399,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
 
         # print info
         if fabric.is_global_zero and (idx + 1) % opt.print_freq == 0:
-            if opt.method.startswith("SigCLBase"):
+            if opt.method.startswith("SigCLBase") or opt.method.startswith("Focal"):
                 log_str = (
                     "Base {neg_weight}\t"
                     "Train: [{0}][{1}/{2}]\t"

@@ -1,3 +1,4 @@
+import torch
 from .base import SigCLossBase
 
 # class SigCLossPN(SigCLossBase):
@@ -58,5 +59,56 @@ class SigCLossNegWeight(SigCLossBase):
 
 
 class SigCLossAverage(SigCLossBase):
-    def _loss(self, *args, **kwargs):
-        super()._loss(**args, **kwargs, output_dict=True)
+    def _aggregate_loss(self, loss_dict):
+        return (loss_dict["pos_loss_sum"] + loss_dict["neg_loss_sum"]) / (loss_dict["num_pos"] + loss_dict["num_neg"])
+
+class SigCLossRatio(SigCLossBase):
+    def _aggregate_loss(self, loss_dict):
+        return (loss_dict["pos_loss_sum"] + self.neg_weight * loss_dict["neg_loss_sum"]) / (loss_dict["num_pos"] + loss_dict["num_neg"] * self.neg_weight)
+
+class SigCLossAverageV2(SigCLossBase):
+    def _aggregate_loss(self, loss_dict):
+        return (loss_dict["pos_loss_sum"] + loss_dict["neg_loss_sum"]) / loss_dict["num_pos"]
+
+
+class FocalBase(SigCLossBase):
+    def __init__(self, gamma=2.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gamma = gamma
+
+    def _loss(
+        self,
+        loss_info,
+        extra_info,
+        first_features,
+        second_features,
+        first_label,
+        second_label,
+        logit_scale,
+        logit_bias=None,
+        mask_diagonal=False,
+    ):
+        logits = loss_info["logits"]
+        pos_mask = loss_info["pos_mask"]
+        neg_mask = loss_info["neg_mask"]
+        labels = loss_info["labels"]
+        loss_matrix = loss_info["loss_matrix"]
+        
+        p = torch.sigmoid(logits * labels)
+        focal_weight = (1 - p) ** self.gamma
+        loss_matrix = loss_matrix * focal_weight
+        
+        pos_loss_sum = (loss_matrix * pos_mask).sum()
+        neg_loss_sum = (loss_matrix * neg_mask).sum()
+        num_pos = pos_mask.sum().clamp(min=1)
+        num_neg = neg_mask.sum().clamp(min=1)
+        
+        return {
+            "pos_loss_sum": pos_loss_sum,
+            "neg_loss_sum": neg_loss_sum,
+            "num_pos": num_pos,
+            "num_neg": num_neg,
+        }
+
+class FocalAverage(FocalBase, SigCLossAverageV2):
+    pass

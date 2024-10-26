@@ -130,14 +130,15 @@ def set_model(opt):
     state_dict = ckpt["model"]
 
     if torch.cuda.is_available():
-        if torch.cuda.device_count() > 1:
-            model.encoder = torch.nn.DataParallel(model.encoder)
-        else:
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                k = k.replace("module.", "")
-                new_state_dict[k] = v
-            state_dict = new_state_dict
+    #     if torch.cuda.device_count() > 1:
+    #         model.encoder = torch.nn.DataParallel(model.encoder)
+    #     else:
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            k = k.replace("module.", "")
+            new_state_dict[k] = v
+        state_dict = new_state_dict
+
         model = model.cuda()
         classifier = classifier.cuda()
         criterion = criterion.cuda()

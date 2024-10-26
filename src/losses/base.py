@@ -72,6 +72,7 @@ class SigCLossBase(nn.Module):
 
         loss_matrix = -F.logsigmoid(labels * logits)
         loss_info = {
+            "logits": logits,
             "loss_matrix": loss_matrix,
             "labels": labels,
             "pos_mask": pos_mask,
