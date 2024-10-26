@@ -282,7 +282,7 @@ def main():
     best_acc = 0
     opt = parse_option()
 
-    seed_everything(opt.seed)
+    seed_everything(42)
 
     # Initialize wandb if enabled and progress is not disabled
     if opt.log_wandb and not opt.disable_progress:

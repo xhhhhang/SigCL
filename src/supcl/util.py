@@ -2,6 +2,7 @@ import math
 import os
 import random
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -186,3 +187,34 @@ def run_linear_eval(ckpt_path, opt):
         print(f"Linear evaluation failed: {e}")
         return None
 
+
+def run_linear_eval_on_saved_checkpoints(opt, fabric):
+        print("Running linear evaluation on saved checkpoints...")
+        checkpoint_dir = Path(opt.save_folder)
+        checkpoints = sorted(
+            checkpoint_dir.glob("ckpt_epoch_*.pth"), key=lambda x: int(x.stem.split("_")[-1])
+        )
+
+        # Also include the last checkpoint
+        last_checkpoint = checkpoint_dir / "last.pth"
+        if last_checkpoint.exists():
+            checkpoints.append(last_checkpoint)
+
+        # Run linear eval on each checkpoint
+        for ckpt_path in checkpoints:
+            epoch = (
+                int(ckpt_path.stem.split("_")[-1]) if "last" not in str(ckpt_path) else opt.epochs
+            )
+
+            # Run linear evaluation
+            val_acc = run_linear_eval(str(ckpt_path), opt)
+
+            if val_acc is not None:
+                # Log the linear evaluation results
+                log_data = {
+                    "linear_eval/val_accuracy": val_acc,
+                    "linear_eval/epoch": epoch,
+                }
+                fabric.log_dict(log_data, step=epoch)
+
+                print(f"Checkpoint {ckpt_path.name}: Linear evaluation accuracy = {val_acc:.2f}")
