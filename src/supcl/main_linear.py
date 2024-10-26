@@ -117,7 +117,7 @@ def parse_option():
 def set_model(opt):
     if opt.method == "SupCon":
         model = SupConResNet(name=opt.model)
-    elif opt.method.startswith("SigCL"):
+    elif opt.method.startswith("SigCL") or opt.method.startswith("Focal"):
         model = SigCLResNet(name=opt.model)
     else:
         raise ValueError(f"method not supported: {opt.method}")

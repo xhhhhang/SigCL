@@ -25,15 +25,23 @@ from util import (
     TwoCropTransform,
     adjust_learning_rate,
     run_linear_eval,
+    run_linear_eval_on_saved_checkpoints,
     save_model,
     seed_everything,
     set_optimizer,
     warmup_learning_rate,
-    run_linear_eval_on_saved_checkpoints,
 )
 
 from losses import SupConLoss
-from src.losses.loss import SigCLossBase, SigCLossNegWeight, SigCLossAverage, SigCLossRatio, SigCLossAverageV2, FocalBase, FocalAverage
+from src.losses.loss import (
+    FocalAverage,
+    FocalBase,
+    SigCLossAverage,
+    SigCLossAverageV2,
+    SigCLossBase,
+    SigCLossNegWeight,
+    SigCLossRatio,
+)
 
 
 def parse_option():
@@ -122,7 +130,8 @@ def parse_option():
     parser.add_argument(
         "--skip_train", action="store_true", help="skip training and only run linear eval"
     )
-    parser.add_argument("--gamma", type=float, default=2.0, help="gamma for focal loss")
+    parser.add_argument("--gamma", type=float, default=1.0, help="gamma for focal loss")
+    parser.add_argument("--normalize_focal", action="store_true", help="normalize focal loss")
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
@@ -285,13 +294,13 @@ def set_model(opt, fabric):
             init_logit_scale=opt.init_logit_scale,
             init_logit_bias=opt.init_logit_bias,
         )
-        if opt.method == 'SigCLBaseAvg':
+        if opt.method == "SigCLBaseAvg":
             print(f"Using SigCLBaseAvg: {opt.neg_weight}")
             criterion_class = SigCLossAverage
-        elif opt.method == 'SigCLBaseRatio':
+        elif opt.method == "SigCLBaseRatio":
             print(f"Using SigCLBaseRatio: {opt.neg_weight}")
             criterion_class = SigCLossRatio
-        elif opt.method == 'SigCLBaseAvgV2':
+        elif opt.method == "SigCLBaseAvgV2":
             print(f"Using SigCLBaseAvgV2: {opt.neg_weight}")
             criterion_class = SigCLossAverageV2
         else:
@@ -306,16 +315,22 @@ def set_model(opt, fabric):
             init_logit_scale=opt.init_logit_scale,
             init_logit_bias=opt.init_logit_bias,
         )
-        if opt.method == 'FocalBase':
+        if opt.method == "FocalBase":
             print(f"Using FocalBase: {opt.neg_weight}")
             criterion_class = FocalBase
-        elif opt.method == 'FocalAverage':
+        elif opt.method == "FocalAverage":
             print(f"Using FocalAverage: {opt.neg_weight}")
             criterion_class = FocalAverage
         else:
             raise ValueError(f"Focal method not supported: {opt.method}")
 
-        criterion = criterion_class(gamma=opt.gamma, neg_weight=opt.neg_weight, fabric=fabric, bidir=opt.bidir)
+        criterion = criterion_class(
+            gamma=opt.gamma,
+            normalize=opt.normalize_focal,
+            neg_weight=opt.neg_weight,
+            fabric=fabric,
+            bidir=opt.bidir,
+        )
 
     # Compile the model
     if opt.compile:
@@ -416,7 +431,7 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
                         logit_bias=logit_bias.item(),
                         loss=losses,
                         neg_weight=opt.neg_weight
-                        if opt.method.startswith("SigCLBase")
+                        if opt.method.startswith("SigCLBase") or opt.method.startswith("Focal")
                         else criterion.neg_weight,
                     )
                 )
@@ -492,12 +507,12 @@ def main():
 
     train_loader = fabric.setup_dataloaders(train_loader)
 
-    if (opt.skip_train):
+    if opt.skip_train:
         # After training loop, run linear evaluation on saved checkpoints
         if fabric.is_global_zero:
             run_linear_eval_on_saved_checkpoints(opt, fabric)
         return
-        
+
     # training routine
     for epoch in range(1, opt.epochs + 1):
         if isinstance(optimizer, dict):
@@ -527,7 +542,7 @@ def main():
             )
         else:
             log_data.update({"learning_rate": optimizer.param_groups[0]["lr"]})
-        if opt.method.startswith("Sig"):
+        if opt.method.startswith("Sig") or opt.method.startswith("Focal"):
             log_data.update(
                 {
                     "logit_scale": model.logit_scale.item(),
@@ -548,6 +563,7 @@ def main():
     # After training loop, run linear evaluation on saved checkpoints
     if fabric.is_global_zero:
         run_linear_eval_on_saved_checkpoints(opt, fabric)
+
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,5 @@
 import torch
+
 from .base import SigCLossBase
 
 # class SigCLossPN(SigCLossBase):
@@ -60,11 +61,17 @@ class SigCLossNegWeight(SigCLossBase):
 
 class SigCLossAverage(SigCLossBase):
     def _aggregate_loss(self, loss_dict):
-        return (loss_dict["pos_loss_sum"] + loss_dict["neg_loss_sum"]) / (loss_dict["num_pos"] + loss_dict["num_neg"])
+        return (loss_dict["pos_loss_sum"] + loss_dict["neg_loss_sum"]) / (
+            loss_dict["num_pos"] + loss_dict["num_neg"]
+        )
+
 
 class SigCLossRatio(SigCLossBase):
     def _aggregate_loss(self, loss_dict):
-        return (loss_dict["pos_loss_sum"] + self.neg_weight * loss_dict["neg_loss_sum"]) / (loss_dict["num_pos"] + loss_dict["num_neg"] * self.neg_weight)
+        return (loss_dict["pos_loss_sum"] + self.neg_weight * loss_dict["neg_loss_sum"]) / (
+            loss_dict["num_pos"] + loss_dict["num_neg"] * self.neg_weight
+        )
+
 
 class SigCLossAverageV2(SigCLossBase):
     def _aggregate_loss(self, loss_dict):
@@ -72,9 +79,10 @@ class SigCLossAverageV2(SigCLossBase):
 
 
 class FocalBase(SigCLossBase):
-    def __init__(self, gamma=2.0, *args, **kwargs):
+    def __init__(self, gamma=2.0, normalize=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gamma = gamma
+        self.normalize = normalize
 
     def _loss(
         self,
@@ -93,22 +101,27 @@ class FocalBase(SigCLossBase):
         neg_mask = loss_info["neg_mask"]
         labels = loss_info["labels"]
         loss_matrix = loss_info["loss_matrix"]
-        
+
         p = torch.sigmoid(logits * labels)
         focal_weight = (1 - p) ** self.gamma
         loss_matrix = loss_matrix * focal_weight
-        
+
         pos_loss_sum = (loss_matrix * pos_mask).sum()
         neg_loss_sum = (loss_matrix * neg_mask).sum()
         num_pos = pos_mask.sum().clamp(min=1)
         num_neg = neg_mask.sum().clamp(min=1)
-        
+
+        if self.normalize:
+            pos_loss_sum *= 1 + self.gamma
+            neg_loss_sum *= 1 + self.gamma
+
         return {
             "pos_loss_sum": pos_loss_sum,
             "neg_loss_sum": neg_loss_sum,
             "num_pos": num_pos,
             "num_neg": num_neg,
         }
+
 
 class FocalAverage(FocalBase, SigCLossAverageV2):
     pass
