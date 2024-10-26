@@ -327,7 +327,7 @@ def set_model(opt, fabric):
         elif opt.method == "SigCLBaseAvgV2":
             print(f"Using SigCLBaseAvgV2: {opt.neg_weight}")
             criterion_class = SigCLossAverageV2
-        elif opt.method == "SigCLBaseExp":
+        elif opt.method.startswith("SigCLBaseExp"):
             print(f"Using SigCLBaseExp: {opt.neg_weight}")
             criterion_class = ExpAverage
         else:

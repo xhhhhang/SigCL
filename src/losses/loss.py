@@ -146,8 +146,10 @@ class ExpBase(SigCLossBase):
         loss_matrix = loss_info["loss_matrix"]
 
         p = torch.sigmoid(logits * labels)
-        focal_weight = 10 ** p
-        loss_matrix = loss_matrix * focal_weight
+
+        # self.neg_weight is the base of the exponent, not real NEG weight, just for convenience
+        exp_weight = self.neg_weight ** (1 - p)
+        loss_matrix = loss_matrix * exp_weight
 
         pos_loss_sum = (loss_matrix * pos_mask).sum()
         neg_loss_sum = (loss_matrix * neg_mask).sum()
