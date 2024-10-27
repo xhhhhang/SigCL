@@ -59,13 +59,6 @@ class SigCLossNegWeight(SigCLossBase):
             self.neg_weight = self.max_neg_weight
 
 
-class SigCLossAverage(SigCLossBase):
-    def _aggregate_loss(self, loss_dict):
-        return (loss_dict["pos_loss_sum"] + loss_dict["neg_loss_sum"]) / (
-            loss_dict["num_pos"] + loss_dict["num_neg"]
-        )
-
-
 class SigCLossRatio(SigCLossBase):
     def _aggregate_loss(self, loss_dict):
         return (loss_dict["pos_loss_sum"] + self.neg_weight * loss_dict["neg_loss_sum"]) / (

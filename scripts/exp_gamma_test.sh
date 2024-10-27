@@ -32,10 +32,10 @@ trap cleanup SIGINT SIGTERM
 # Run commands in background and save their PIDs
 # CUDA_VISIBLE_DEVICES=0 $COMMAND --method SigCLBase --neg_weight 1 & PID1=$!
 CUDA_VISIBLE_DEVICES=0 $COMMAND --method SigCLBaseExp_1 --neg_weight 1 --init_logit_bias -10 & PID2=$!
-CUDA_VISIBLE_DEVICES=1 $COMMAND --method SigCLBaseExp_4 --neg_weight 4 --init_logit_bias -10 & PID3=$!
+CUDA_VISIBLE_DEVICES=1 $COMMAND --method SigCLBaseExp_2 --neg_weight 2 --init_logit_bias -10 & PID3=$!
 # CUDA_VISIBLE_DEVICES=1 $COMMAND & PID3=$!
-CUDA_VISIBLE_DEVICES=2 $COMMAND --method SigCLBaseExp_9 --neg_weight 9 --init_logit_bias -10 & PID4=$!
-CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCLBaseExp_16 --neg_weight 16 --init_logit_bias -10 & PID5=$!
+CUDA_VISIBLE_DEVICES=2 $COMMAND --method SigCLBaseExp_3 --neg_weight 3 --init_logit_bias -10 & PID4=$!
+CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCLBaseExp_4 --neg_weight 4 --init_logit_bias -10 & PID5=$!
 # CUDA_VISIBLE_DEVICES=5 python src/supcl/main_ce.py --batch_size $BATCH_SIZE --learning_rate 0.8 --cosine --warm --print_freq $PRINT_FREQ --epochs $EPOCHS --model $MODEL & PID6=$!
 
 # $COMMAND --method SigCLBase_1000 --neg_weight 1000 --init_logit_bias -10 --batch_size 768 & PID4=$!

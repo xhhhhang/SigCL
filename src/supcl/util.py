@@ -163,7 +163,7 @@ def run_linear_eval(ckpt_path, opt):
         "--dataset", opt.dataset,
         "--method", opt.method,
         "--ckpt", ckpt_path,
-        "--batch_size", "1024",  # Using standard linear eval batch size
+        "--batch_size", "2048",  # Using standard linear eval batch size
         "--epochs", str(opt.linear_epochs),        # Standard number of epochs for linear eval
         "--learning_rate", "5",  # Standard learning rate for linear eval
         "--disable_progress"     # Disable progress to avoid cluttering logs
@@ -192,14 +192,22 @@ def run_linear_eval_on_saved_checkpoints(opt, fabric):
         print("Running linear evaluation on saved checkpoints...")
         checkpoint_dir = Path(opt.save_folder)
         checkpoints = sorted(
-            checkpoint_dir.glob("ckpt_epoch_*.pth"), key=lambda x: int(x.stem.split("_")[-1])
+            checkpoint_dir.glob("ckpt_epoch_*.pth"), 
+            key=lambda x: int(x.stem.split("_")[-1]),
+            reverse=True
         )
 
-        # Also include the last checkpoint
+        # Check if last checkpoint exists and get its epoch
         last_checkpoint = checkpoint_dir / "last.pth"
         if last_checkpoint.exists():
-            checkpoints.append(last_checkpoint)
+            # Only add last checkpoint if its epoch doesn't match any existing checkpoint
+            last_epoch = opt.epochs
+            if not any(int(ckpt.stem.split("_")[-1]) == last_epoch for ckpt in checkpoints):
+                checkpoints.append(last_checkpoint)
 
+        # Store results to log all at once
+        results = []
+        
         # Run linear eval on each checkpoint
         for ckpt_path in checkpoints:
             epoch = (
@@ -210,11 +218,14 @@ def run_linear_eval_on_saved_checkpoints(opt, fabric):
             val_acc = run_linear_eval(str(ckpt_path), opt)
 
             if val_acc is not None:
-                # Log the linear evaluation results
-                log_data = {
-                    "linear_eval/val_accuracy": val_acc,
-                    "linear_eval/epoch": epoch,
-                }
-                fabric.log_dict(log_data, step=epoch)
-
+                results.append((epoch, val_acc))
                 print(f"Checkpoint {ckpt_path.name}: Linear evaluation accuracy = {val_acc:.2f}")
+
+        # Sort results by epoch and log to wandb
+        results.sort(key=lambda x: x[0])  # Sort by epoch
+        for epoch, val_acc in results:
+            log_data = {
+                "linear_eval/val_accuracy": val_acc,
+                "linear_eval/epoch": epoch,
+            }
+            fabric.log_dict(log_data, step=epoch)

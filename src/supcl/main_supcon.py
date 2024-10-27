@@ -37,7 +37,6 @@ from src.losses.loss import (
     ExpAverage,
     FocalAverage,
     FocalBase,
-    SigCLossAverage,
     SigCLossAverageV2,
     SigCLossBase,
     SigCLossNegWeight,
@@ -318,14 +317,11 @@ def set_model(opt, fabric):
             init_logit_scale=opt.init_logit_scale,
             init_logit_bias=opt.init_logit_bias,
         )
-        if opt.method == "SigCLBaseAvg":
-            print(f"Using SigCLBaseAvg: {opt.neg_weight}")
-            criterion_class = SigCLossAverage
-        elif opt.method == "SigCLBaseRatio":
+        if opt.method == "SigCLBaseRatio":
             print(f"Using SigCLBaseRatio: {opt.neg_weight}")
             criterion_class = SigCLossRatio
-        elif opt.method == "SigCLBaseAvgV2":
-            print(f"Using SigCLBaseAvgV2: {opt.neg_weight}")
+        elif opt.method == "SigCLBaseAvgV2" or opt.method == "SigCLBaseAvg":
+            print(f"Using SigCLBaseAvg: {opt.neg_weight}")
             criterion_class = SigCLossAverageV2
         elif opt.method.startswith("SigCLBaseExp"):
             print(f"Using SigCLBaseExp: {opt.neg_weight}")
