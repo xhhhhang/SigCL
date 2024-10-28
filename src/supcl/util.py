@@ -160,6 +160,14 @@ def seed_everything(seed=42):
 
 def run_linear_eval(ckpt_path, opt):
     """Run linear evaluation on a checkpoint and return the validation accuracy."""
+    # Create logs directory if it doesn't exist
+    log_dir = Path(opt.save_folder) / "linear_eval_logs"
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create log file name based on checkpoint
+    ckpt_name = Path(ckpt_path).stem
+    log_file = log_dir / f"{ckpt_name}_linear_eval.log"
+    
     linear_cmd = [
         "python",
         "src/supcl/main_linear.py",
@@ -183,17 +191,32 @@ def run_linear_eval(ckpt_path, opt):
     # Run the command and capture output
     try:
         result = subprocess.run(linear_cmd, capture_output=True, text=True, check=True)
+        
+        # Save stdout to log file
+        with open(log_file, 'w') as f:
+            f.write("=== STDOUT ===\n")
+            f.write(result.stdout)
+            if result.stderr:
+                f.write("\n=== STDERR ===\n")
+                f.write(result.stderr)
 
         # Extract accuracy from the output
-        # The output format is: "{method} {model} {dataset} best accuracy: {acc}"
         output = result.stdout.strip()
         acc = float(output.split("best accuracy: ")[-1])
         return acc
     except subprocess.CalledProcessError as e:
+        # Save error information to log file
+        with open(log_file, 'w') as f:
+            f.write(f"=== ERROR: Process failed with return code {e.returncode} ===\n")
+            f.write("\n=== STDOUT ===\n")
+            f.write(e.stdout)
+            f.write("\n=== STDERR ===\n")
+            f.write(e.stderr)
+            f.write(f"\n=== COMMAND THAT FAILED ===\n")
+            f.write(' '.join(e.cmd))
+        
         print(f"Linear evaluation failed with error code {e.returncode}")
-        print(f"STDOUT:\n{e.stdout}")
-        print(f"STDERR:\n{e.stderr}")
-        print(f"Command that failed: {' '.join(e.cmd)}")
+        print(f"Error logs saved to: {log_file}")
         return None
 
 

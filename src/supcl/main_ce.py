@@ -17,6 +17,7 @@ from util import (
     save_model,
     set_optimizer,
     warmup_learning_rate,
+    load_imagenet_hf,
 )
 
 # Import wandb and other necessary modules
@@ -136,6 +137,9 @@ def set_loader(opt):
     elif opt.dataset == "cifar100":
         mean = (0.5071, 0.4867, 0.4408)
         std = (0.2675, 0.2565, 0.2761)
+    elif opt.dataset == "imagenet":
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
     else:
         raise ValueError(f"dataset not supported: {opt.dataset}")
     normalize = transforms.Normalize(mean=mean, std=std)
@@ -166,6 +170,10 @@ def set_loader(opt):
             root=opt.data_folder, transform=train_transform, download=True
         )
         val_dataset = datasets.CIFAR100(root=opt.data_folder, train=False, transform=val_transform)
+    elif opt.dataset == "imagenet":
+        dataset = load_imagenet_hf(opt, train_transform)
+        train_dataset = dataset['train']
+        val_dataset = dataset['validation']
     else:
         raise ValueError(opt.dataset)
 
