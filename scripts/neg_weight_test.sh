@@ -38,7 +38,7 @@ CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCLBase_3076 --neg_weight 3076 --init
 
 # $COMMAND --method SigCLBase_1000 --neg_weight 1000 --init_logit_bias -10 --batch_size 768 & PID4=$!
 # Wait for all background processes to finish
-wait t ID2 $PID3 $PID4 $PID5
+wait $PID2 $PID3 $PID4 $PID5
 
 echo "All commands have finished executing."
 
