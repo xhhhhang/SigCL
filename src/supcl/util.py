@@ -8,6 +8,8 @@ import numpy as np
 import torch
 import torch.optim as optim
 
+import datasets as hf_datasets
+
 
 class TwoCropTransform:
     """Create two crops of the same image."""
@@ -155,77 +157,95 @@ def seed_everything(seed=42):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
+
 def run_linear_eval(ckpt_path, opt):
     """Run linear evaluation on a checkpoint and return the validation accuracy."""
     linear_cmd = [
-        "python", "src/supcl/main_linear.py",
-        "--model", opt.model,
-        "--dataset", opt.dataset,
-        "--method", opt.method,
-        "--ckpt", ckpt_path,
-        "--batch_size", "2048",  # Using standard linear eval batch size
-        "--epochs", str(opt.linear_epochs),        # Standard number of epochs for linear eval
-        "--learning_rate", "5",  # Standard learning rate for linear eval
-        "--disable_progress"     # Disable progress to avoid cluttering logs
+        "python",
+        "src/supcl/main_linear.py",
+        "--model",
+        opt.model,
+        "--dataset",
+        opt.dataset,
+        "--method",
+        opt.method,
+        "--ckpt",
+        ckpt_path,
+        "--batch_size",
+        "2048",  # Using standard linear eval batch size
+        "--epochs",
+        str(opt.linear_epochs),  # Standard number of epochs for linear eval
+        "--learning_rate",
+        "5",  # Standard learning rate for linear eval
+        "--disable_progress",  # Disable progress to avoid cluttering logs
     ]
-    
+
     # Run the command and capture output
     try:
-        result = subprocess.run(
-            linear_cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        
+        result = subprocess.run(linear_cmd, capture_output=True, text=True, check=True)
+
         # Extract accuracy from the output
         # The output format is: "{method} {model} {dataset} best accuracy: {acc}"
         output = result.stdout.strip()
         acc = float(output.split("best accuracy: ")[-1])
         return acc
     except subprocess.CalledProcessError as e:
-        print(f"Linear evaluation failed: {e}")
+        print(f"Linear evaluation failed with error code {e.returncode}")
+        print(f"STDOUT:\n{e.stdout}")
+        print(f"STDERR:\n{e.stderr}")
+        print(f"Command that failed: {' '.join(e.cmd)}")
         return None
 
 
 def run_linear_eval_on_saved_checkpoints(opt, fabric):
-        print("Running linear evaluation on saved checkpoints...")
-        checkpoint_dir = Path(opt.save_folder)
-        checkpoints = sorted(
-            checkpoint_dir.glob("ckpt_epoch_*.pth"), 
-            key=lambda x: int(x.stem.split("_")[-1]),
-            reverse=True
-        )
+    print("Running linear evaluation on saved checkpoints...")
+    checkpoint_dir = Path(opt.save_folder)
+    checkpoints = sorted(
+        checkpoint_dir.glob("ckpt_epoch_*.pth"),
+        key=lambda x: int(x.stem.split("_")[-1]),
+        reverse=True,
+    )
 
-        # Check if last checkpoint exists and get its epoch
-        last_checkpoint = checkpoint_dir / "last.pth"
-        if last_checkpoint.exists():
-            # Only add last checkpoint if its epoch doesn't match any existing checkpoint
-            last_epoch = opt.epochs
-            if not any(int(ckpt.stem.split("_")[-1]) == last_epoch for ckpt in checkpoints):
-                checkpoints.append(last_checkpoint)
+    # Check if last checkpoint exists and get its epoch
+    last_checkpoint = checkpoint_dir / "last.pth"
+    if last_checkpoint.exists():
+        # Only add last checkpoint if its epoch doesn't match any existing checkpoint
+        last_epoch = opt.epochs
+        if not any(int(ckpt.stem.split("_")[-1]) == last_epoch for ckpt in checkpoints):
+            checkpoints.append(last_checkpoint)
 
-        # Store results to log all at once
-        results = []
-        
-        # Run linear eval on each checkpoint
-        for ckpt_path in checkpoints:
-            epoch = (
-                int(ckpt_path.stem.split("_")[-1]) if "last" not in str(ckpt_path) else opt.epochs
-            )
+    # Store results to log all at once
+    results = []
 
-            # Run linear evaluation
-            val_acc = run_linear_eval(str(ckpt_path), opt)
+    # Run linear eval on each checkpoint
+    for ckpt_path in checkpoints:
+        epoch = int(ckpt_path.stem.split("_")[-1]) if "last" not in str(ckpt_path) else opt.epochs
 
-            if val_acc is not None:
-                results.append((epoch, val_acc))
-                print(f"Checkpoint {ckpt_path.name}: Linear evaluation accuracy = {val_acc:.2f}")
+        # Run linear evaluation
+        val_acc = run_linear_eval(str(ckpt_path), opt)
 
-        # Sort results by epoch and log to wandb
-        results.sort(key=lambda x: x[0])  # Sort by epoch
-        for epoch, val_acc in results:
-            log_data = {
-                "linear_eval/val_accuracy": val_acc,
-                "linear_eval/epoch": epoch,
-            }
-            fabric.log_dict(log_data, step=epoch)
+        if val_acc is not None:
+            results.append((epoch, val_acc))
+            print(f"Checkpoint {ckpt_path.name}: Linear evaluation accuracy = {val_acc:.2f}")
+
+    # Sort results by epoch and log to wandb
+    results.sort(key=lambda x: x[0])  # Sort by epoch
+    for epoch, val_acc in results:
+        log_data = {
+            "linear_eval/val_accuracy": val_acc,
+            "linear_eval/epoch": epoch,
+        }
+        fabric.log_dict(log_data, step=epoch)
+
+
+def load_imagenet_hf(opt, transform):
+    imagenet = hf_datasets.load_dataset("ILSVRC/imagenet-1k", trust_remote_code=True)
+    imagenet = imagenet.cast_column("image", hf_datasets.Image(mode="RGB"))
+
+    def transform_hf(examples):
+        transformed_images = [transform(image) for image in examples["image"]]
+        examples["image"] = transformed_images
+        return examples
+
+    imagenet.set_transform(transform_hf)
+    return imagenet

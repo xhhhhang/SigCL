@@ -48,7 +48,11 @@ def parse_option():
     # model dataset
     parser.add_argument("--model", type=str, default="resnet50")
     parser.add_argument(
-        "--dataset", type=str, default="cifar10", choices=["cifar10", "cifar100"], help="dataset"
+        "--dataset",
+        type=str,
+        default="cifar10",
+        choices=["cifar10", "cifar100", "imagenet", "path"],
+        help="dataset",
     )
 
     # other setting
@@ -108,6 +112,8 @@ def parse_option():
         opt.n_cls = 10
     elif opt.dataset == "cifar100":
         opt.n_cls = 100
+    elif opt.dataset == "imagenet":
+        opt.n_cls = 1000
     else:
         raise ValueError(f"dataset not supported: {opt.dataset}")
 
@@ -130,9 +136,9 @@ def set_model(opt):
     state_dict = ckpt["model"]
 
     if torch.cuda.is_available():
-    #     if torch.cuda.device_count() > 1:
-    #         model.encoder = torch.nn.DataParallel(model.encoder)
-    #     else:
+        #     if torch.cuda.device_count() > 1:
+        #         model.encoder = torch.nn.DataParallel(model.encoder)
+        #     else:
         new_state_dict = {}
         for k, v in state_dict.items():
             k = k.replace("module.", "")
@@ -162,8 +168,13 @@ def train(train_loader, model, classifier, criterion, optimizer, epoch, opt):
     top1 = AverageMeter()
 
     end = time.time()
-    for idx, (images, labels) in enumerate(train_loader):
+    for idx, examples in enumerate(train_loader):
         data_time.update(time.time() - end)
+
+        if opt.dataset == "imagenet":
+            images, labels = examples["image"], examples["label"]
+        else:
+            images, labels = examples
 
         images = images.cuda(non_blocking=True)
         labels = labels.cuda(non_blocking=True)
@@ -237,7 +248,12 @@ def validate(val_loader, model, classifier, criterion, opt):
 
     with torch.no_grad():
         end = time.time()
-        for idx, (images, labels) in enumerate(val_loader):
+        for idx, examples in enumerate(val_loader):
+            if opt.dataset == "imagenet":
+                images, labels = examples["image"], examples["label"]
+            else:
+                images, labels = examples
+
             images = images.float().cuda()
             labels = labels.cuda()
             bsz = labels.shape[0]

@@ -1,4 +1,5 @@
 import argparse
+import gc
 import math
 import os
 import sys
@@ -9,6 +10,7 @@ import numpy as np
 import rootutils
 import torch
 import torch.backends.cudnn as cudnn
+import torch.cuda
 from dotenv import load_dotenv
 from lightning.fabric import Fabric
 from lightning.fabric.loggers import CSVLogger, TensorBoardLogger
@@ -17,6 +19,8 @@ from torchvision import datasets, transforms
 from tqdm import tqdm
 from wandb.integration.lightning.fabric import WandbLogger
 
+import datasets as hf_datasets
+
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 from networks.resnet_big import SigCLResNet, SupConResNet
@@ -24,6 +28,7 @@ from util import (
     AverageMeter,
     TwoCropTransform,
     adjust_learning_rate,
+    load_imagenet_hf,
     run_linear_eval,
     run_linear_eval_on_saved_checkpoints,
     save_model,
@@ -73,7 +78,7 @@ def parse_option():
         "--dataset",
         type=str,
         default="cifar10",
-        choices=["cifar10", "cifar100", "path"],
+        choices=["cifar10", "cifar100", "imagenet", "path"],
         help="dataset",
     )
     parser.add_argument("--mean", type=str, help="mean of dataset in path in form of str tuple")
@@ -246,18 +251,16 @@ def set_loader(opt, fabric):
                 root=opt.data_folder, transform=TwoCropTransform(train_transform), download=True
             )
         elif opt.dataset == "imagenet":
-            train_dataset = datasets.ImageNet(
-                root=opt.data_folder, transform=TwoCropTransform(train_transform), split="train"
-            )
+            train_dataset = load_imagenet_hf(opt, TwoCropTransform(train_transform))["train"]
         elif opt.dataset == "path":
             train_dataset = datasets.ImageFolder(
                 root=opt.data_folder, transform=TwoCropTransform(train_transform)
             )
-    
+
     # Make all processes wait for rank 0 to finish downloading
     if fabric.world_size > 1:
         fabric.barrier()
-    
+
     # Now all processes can load the dataset without downloading
     if fabric.local_rank != 0:
         if opt.dataset == "cifar10":
@@ -269,13 +272,15 @@ def set_loader(opt, fabric):
                 root=opt.data_folder, transform=TwoCropTransform(train_transform), download=False
             )
         elif opt.dataset == "imagenet":
-            train_dataset = datasets.ImageNet(
-                root=opt.data_folder, transform=TwoCropTransform(train_transform), split="train"
-            )
+            train_dataset = load_imagenet_hf(opt, TwoCropTransform(train_transform))["train"]
         elif opt.dataset == "path":
             train_dataset = datasets.ImageFolder(
                 root=opt.data_folder, transform=TwoCropTransform(train_transform)
             )
+
+    # # Make all processes start the rest operations at the same time
+    # if fabric.world_size > 1:
+    #     fabric.barrier()
 
     if opt.overfit_batch:
         # Create a subset with only one batch
@@ -371,7 +376,11 @@ def train(fabric, train_loader, model, criterion, optimizer, epoch, opt):
     losses = AverageMeter()
 
     end = time.time()
-    for idx, (images, labels) in enumerate(train_loader):
+    for idx, examples in enumerate(train_loader):
+        if opt.dataset == "imagenet":
+            images, labels = examples["image"], examples["label"]
+        else:
+            images, labels = examples
         data_time.update(time.time() - end)
 
         images = torch.cat([images[0], images[1]], dim=0)
@@ -583,6 +592,11 @@ def main():
     if fabric.is_global_zero:
         save_file = os.path.join(opt.save_folder, "last.pth")
         save_model(model, optimizer, opt, opt.epochs, save_file)
+
+    # Clean up memory before linear evaluation
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        gc.collect()
 
     # After training loop, run linear evaluation on saved checkpoints
     if fabric.is_global_zero:
