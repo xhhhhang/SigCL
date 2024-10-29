@@ -16,6 +16,7 @@ from util import (
     seed_everything,
     set_optimizer,
     warmup_learning_rate,
+    create_optimizer,
 )
 
 # Import wandb conditionally
@@ -73,6 +74,14 @@ def parse_option():
         "--disable_progress",
         action="store_true",
         help="disable all print and wandb except the last print",
+    )
+
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="sgd",
+        choices=["sgd", "lars", "rmsprop"],
+        help="optimizer for linear evaluation",
     )
 
     opt = parser.parse_args()
@@ -320,7 +329,13 @@ def main():
     model, classifier, criterion = set_model(opt)
 
     # build optimizer
-    optimizer = set_optimizer(opt, classifier)
+    optimizer = create_optimizer(
+        opt.optimizer,
+        classifier.parameters(),
+        lr=opt.learning_rate,
+        momentum=opt.momentum,
+        weight_decay=opt.weight_decay,
+    )
 
     # training routine
     for epoch in tqdm(range(1, opt.epochs + 1)):
