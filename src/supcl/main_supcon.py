@@ -19,8 +19,6 @@ from torchvision import datasets, transforms
 from tqdm import tqdm
 from wandb.integration.lightning.fabric import WandbLogger
 
-import datasets as hf_datasets
-
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 from networks.resnet_big import SigCLResNet, SupConResNet
@@ -151,6 +149,19 @@ def parse_option():
         default="sgd",
         choices=["sgd", "lars", "rmsprop"],
         help="optimizer for logit parameters",
+    )
+    parser.add_argument(
+        "--linear_optimizer",
+        type=str,
+        default="sgd",
+        choices=["sgd", "lars", "rmsprop"],
+        help="optimizer for linear eval",
+    )
+    parser.add_argument(
+        "--linear_learning_rate", type=float, default=5, help="learning rate for linear eval"
+    )
+    parser.add_argument(
+        "--linear_batch_size", type=int, default=256, help="batch size for linear eval"
     )
     parser.add_argument(
         "--gather_loss", action="store_true", help="gather positive and negative count and loss across GPUs"

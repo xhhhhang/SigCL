@@ -99,6 +99,7 @@ def create_optimizer(name, parameters, lr, momentum=0.9, weight_decay=1e-4):
             weight_decay=weight_decay,
         )
     elif name == "rmsprop":
+        print("Using RMSprop optimizer")
         return optim.RMSprop(
             parameters,
             lr=lr,
@@ -215,13 +216,13 @@ def run_linear_eval(ckpt_path, opt):
         "--ckpt",
         ckpt_path,
         "--batch_size",
-        "2048",  # Using standard linear eval batch size
+        str(opt.linear_batch_size),  # Using standard linear eval batch size
         "--epochs",
         str(opt.linear_epochs),  # Standard number of epochs for linear eval
         "--learning_rate",
-        "5",  # Standard learning rate for linear eval
+        str(opt.linear_learning_rate),  # Standard learning rate for linear eval
         "--optimizer",
-        opt.optimizer,  # Pass the optimizer choice
+        opt.linear_optimizer,  # Pass the optimizer choice
         "--disable_progress",  # Disable progress to avoid cluttering logs
     ]
 
