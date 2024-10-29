@@ -35,7 +35,9 @@ trap cleanup SIGINT SIGTERM
 CUDA_VISIBLE_DEVICES=0 $COMMAND --method SigCLBase --batch_size 512 & PID0=$!
 CUDA_VISIBLE_DEVICES=1 $COMMAND --method SigCLBase --batch_size 1024 & PID1=$!
 CUDA_VISIBLE_DEVICES=2 $COMMAND --method SigCLBase --batch_size 2048 & PID2=$!
-CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCLBase --batch_size 3076 & PID3=$!
+
+CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCLBase --batch_size 4096 & PID3=$!
+CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCLBase --batch_size 6144 & PID3=$!
 
 CUDA_VISIBLE_DEVICES=4 $COMMAND --method SigCLBaseAvg --batch_size 512 & PID4=$!
 CUDA_VISIBLE_DEVICES=5 $COMMAND --method SigCLBaseAvg --batch_size 1024 & PID5=$!

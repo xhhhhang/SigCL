@@ -12,7 +12,7 @@ PRINT_FREQ=100
 EPOCHS=350
 LINEAR_EPOCHS=50
 
-COMMAND="python src/supcl/main_supcon.py --init_logit_bias -10 --linear_epochs $LINEAR_EPOCHS --batch_size $BATCH_SIZE --learning_rate $LEARNING_RATE --logit_learning_rate $LOGIT_LEARNING_RATE --temp 0.1 --cosine --warm --model $MODEL --print_freq $PRINT_FREQ --epochs $EPOCHS --dataset $DATASET"
+COMMAND="python src/supcl/main_supcon.py --method SigCLBase --init_logit_bias -10 --linear_epochs $LINEAR_EPOCHS --batch_size $BATCH_SIZE --learning_rate $LEARNING_RATE --logit_learning_rate $LOGIT_LEARNING_RATE --temp 0.1 --cosine --warm --model $MODEL --print_freq $PRINT_FREQ --epochs $EPOCHS --dataset $DATASET"
 
 # Append any extra arguments to the command
 EXTRA_ARGS="$@"
@@ -29,18 +29,17 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # Run commands in background and save their PIDs
-CUDA_VISIBLE_DEVICES=0 $COMMAND --method SigCLBase --neg_weight 250 & PID0=$!
-CUDA_VISIBLE_DEVICES=1 $COMMAND --method SigCLBase --neg_weight 500 & PID1=$!
-CUDA_VISIBLE_DEVICES=2 $COMMAND --method SigCLBase --neg_weight 1000 & PID2=$!
-CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCLBase --neg_weight 2000 & PID3=$!
-CUDA_VISIBLE_DEVICES=4 $COMMAND --method SigCLBase --neg_weight 4000 & PID4=$!
-CUDA_VISIBLE_DEVICES=5 $COMMAND --method SigCLBase --neg_weight 8000 & PID5=$!
-CUDA_VISIBLE_DEVICES=6 $COMMAND --method SigCLBase --neg_weight 16000 & PID6=$!
-CUDA_VISIBLE_DEVICES=7 $COMMAND --method SigCLBase --neg_weight 32000 & PID7=$!
+CUDA_VISIBLE_DEVICES=0 $COMMAND  --neg_weight 250 & PID0=$!
+CUDA_VISIBLE_DEVICES=1 $COMMAND  --neg_weight 500 & PID1=$!
+CUDA_VISIBLE_DEVICES=2 $COMMAND  --neg_weight 1000 & PID2=$!
+CUDA_VISIBLE_DEVICES=3 $COMMAND  --neg_weight 2000 & PID3=$!
+CUDA_VISIBLE_DEVICES=4 $COMMAND  --neg_weight 4000 & PID4=$!
+CUDA_VISIBLE_DEVICES=5 $COMMAND  --neg_weight 8000 & PID5=$!
+CUDA_VISIBLE_DEVICES=6 $COMMAND  --neg_weight 16000 & PID6=$!
+CUDA_VISIBLE_DEVICES=7 $COMMAND  --neg_weight 32000 & PID7=$!
 
 # Wait for all background processes to finish
 wait $PID0 $PID1 $PID2 $PID3 $PID4 $PID5 $PID6 $PID7
-
 
 echo "All commands have finished executing."
 
