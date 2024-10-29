@@ -42,7 +42,7 @@ torch_ema==0.3
 torch_lr_finder==0.2.2
 torch_optimizer==0.3.0
 torchvision==0.19.1
-tqdm==4.66.5
+tqdm==4.66.6
 transformers==4.46.0
 urllib3==2.2.3
 webdataset==0.2.100
