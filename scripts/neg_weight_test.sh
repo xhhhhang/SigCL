@@ -41,10 +41,10 @@ CUDA_VISIBLE_DEVICES=3 $COMMAND --method SigCLBase_3076 --neg_weight 3076 --init
 wait $PID2 $PID3 $PID4 $PID5
 
 echo "All commands have finished executing."
-
 # used command
 # bash scripts/neg_weight_test.sh --log_tensorboard --log_wandb --print_freq 17 || true;
 # bash scripts/neg_weight_test.sh --log_tensorboard --log_wandb --print_freq 17 --dataset cifar10 || true;
 
 # bash scripts/neg_weight_test.sh --log_tensorboard --log_wandb --print_freq 17 --learning_rate 5 || true;
 # bash scripts/neg_weight_test.sh --log_tensorboard --log_wandb --print_freq 17 --dataset cifar10 --learning_rate 5 || true;
+

@@ -137,6 +137,7 @@ def parse_option():
     )
     parser.add_argument("--gamma", type=float, default=1.0, help="gamma for focal loss")
     parser.add_argument("--normalize_focal", action="store_true", help="normalize focal loss")
+    parser.add_argument("--cosine_logit", action="store_true", help="use cosine annealing for logit scale and bias")
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
@@ -550,7 +551,8 @@ def main():
     for epoch in range(1, opt.epochs + 1):
         if isinstance(optimizer, dict):
             adjust_learning_rate(opt, optimizer["main"], epoch)
-            # adjust_learning_rate(opt, optimizer["logit"], epoch, logit_optimizer=True)
+            if opt.cosine_logit:
+                adjust_learning_rate(opt, optimizer["logit"], epoch, logit_optimizer=True)
         else:
             adjust_learning_rate(opt, optimizer, epoch)
 

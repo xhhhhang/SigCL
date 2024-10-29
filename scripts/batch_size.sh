@@ -17,6 +17,10 @@ TRIAL="Oct27"
 COMMAND_SUP="python src/supcl/main_supcon.py --neg_weight $NEG_WEIGHT --linear_epochs $LINEAR_EPOCHS --learning_rate $LEARNING_RATE --temp 0.1 --cosine --warm --model $MODEL --print_freq $PRINT_FREQ --epochs $EPOCHS --dataset $DATASET --trial $TRIAL"
 COMMAND="$COMMAND_SUP --logit_learning_rate $LOGIT_LEARNING_RATE "
 
+# echo $COMMAND
+# exit
+# python src/supcl/main_supcon.py --neg_weight 3076 --linear_epochs 30 --learning_rate 2 --temp 0.1 --cosine --warm --model resnet18 --print_freq 17 --epochs 700 --dataset cifar100 --trial Oct27 --logit_learning_rate 0.2
+
 # Append any extra arguments to the command
 EXTRA_ARGS="$@"
 COMMAND="$COMMAND $EXTRA_ARGS"
@@ -61,3 +65,5 @@ echo "All commands have finished executing."
 
 # bash scripts/exp_gamma_test.sh --log_tensorboard --log_wandb --print_freq 17 --dataset cifar10 --learning_rate 5 || true;
 # bash scripts/exp_gamma_test.sh --log_tensorboard --log_wandb --print_freq 17 --learning_rate 5 || true;
+
+# CUDA_VISIBLE_DEVICES=0,1 python src/supcl/main_supcon.py --neg_weight 3076 --linear_epochs 30 --learning_rate 2 --temp 0.1 --cosine --warm --model resnet18 --print_freq 17 --epochs 700 --dataset cifar100 --trial Oct27 --logit_learning_rate 0.2 --method SigCLBase --init_logit_bias -10 --batch_size 512 --cosine_logit --log_wandb
