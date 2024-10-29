@@ -138,6 +138,23 @@ def parse_option():
     parser.add_argument("--gamma", type=float, default=1.0, help="gamma for focal loss")
     parser.add_argument("--normalize_focal", action="store_true", help="normalize focal loss")
     parser.add_argument("--cosine_logit", action="store_true", help="use cosine annealing for logit scale and bias")
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="sgd",
+        choices=["sgd", "lars", "rmsprop"],
+        help="optimizer for main network parameters",
+    )
+    parser.add_argument(
+        "--logit_optimizer",
+        type=str,
+        default="sgd",
+        choices=["sgd", "lars", "rmsprop"],
+        help="optimizer for logit parameters",
+    )
+    parser.add_argument(
+        "--gather_loss", action="store_true", help="gather positive and negative count and loss across GPUs"
+    )
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
@@ -155,13 +172,14 @@ def parse_option():
     for it in iterations:
         opt.lr_decay_epochs.append(int(it))
 
-    opt.model_name = "{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}".format(
+    opt.model_name = "{}_{}_{}_lr_{}_decay_{}_bsz_{}*{}_temp_{}_trial_{}".format(
         opt.method,
         opt.dataset,
         opt.model,
         opt.learning_rate,
         opt.weight_decay,
         opt.batch_size,
+        torch.cuda.device_count(),
         opt.temp,
         opt.trial,
     )
@@ -173,6 +191,12 @@ def parse_option():
             opt.model_name = f"{opt.model_name}_base_{opt.neg_weight}"
         else:
             opt.model_name = f"{opt.model_name}_neg_{opt.max_neg_weight}"
+
+    if opt.gather_loss:
+        opt.model_name = f"{opt.model_name}_gather"
+
+    if opt.cosine_logit:
+        opt.model_name = f"{opt.model_name}_cl"
 
     # warm-up for large-batch training,
     if opt.batch_size > 256:

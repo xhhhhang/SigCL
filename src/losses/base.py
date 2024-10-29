@@ -17,6 +17,7 @@ class SigCLossBase(nn.Module):
         bidir=True,
         neg_weight=1,
         fabric=None,
+        gather_loss=False,
     ):
         super().__init__()
         self.cache_labels = cache_labels
@@ -24,6 +25,7 @@ class SigCLossBase(nn.Module):
         self.rank = fabric.local_rank
         self.world_size = fabric.world_size
         self.bidir = bidir
+        self.gather_loss = gather_loss
 
         # cache state
         self.prev_num_logits = 0
@@ -273,4 +275,8 @@ class SigCLossBase(nn.Module):
                     second_label_to_right = second_label_from_left
 
             # print(f"pos num: {loss_dict['num_pos']}, neg num: {loss_dict['num_neg']}")
-            return self._aggregate_loss(loss_dict)
+            if self.gather_loss:
+                reduced_loss_dict = self.fabric.all_reduce(loss_dict)
+                return self._aggregate_loss(reduced_loss_dict)
+            else:
+                return self._aggregate_loss(loss_dict)

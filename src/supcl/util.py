@@ -88,10 +88,40 @@ def warmup_learning_rate(args, epoch, batch_id, total_batches, optimizer, logit_
                 param_group["lr"] = lr
 
 
+def create_optimizer(name, parameters, lr, momentum=0.9, weight_decay=1e-4):
+    """Create optimizer based on name."""
+    name = name.lower()
+    if name == "sgd":
+        return optim.SGD(
+            parameters,
+            lr=lr,
+            momentum=momentum,
+            weight_decay=weight_decay,
+        )
+    elif name == "rmsprop":
+        return optim.RMSprop(
+            parameters,
+            lr=lr,
+            momentum=momentum,
+            weight_decay=weight_decay,
+        )
+    elif name == "lars":
+        from torchlars import LARS
+        print("Using LARS optimizer")
+        return LARS(
+            optim.SGD(
+                parameters,
+                lr=lr,
+                momentum=momentum,
+                weight_decay=weight_decay,
+            )
+        )
+    else:
+        raise ValueError(f"Optimizer {name} not supported")
+
+
 def set_optimizer(opt, model):
-    if (
-        hasattr(model, "logit_scale") and opt.logit_learning_rate != -1
-    ):  # Check if it's a SigCLResNet model
+    if hasattr(model, "logit_scale") and opt.logit_learning_rate != -1:
         # Separate parameters into two groups
         logit_params = []
         logit_names = []
@@ -104,27 +134,32 @@ def set_optimizer(opt, model):
                 other_params.append(param)
 
         print(
-            f"SigCL model detected, setting up separate optimizers for main({opt.learning_rate}) and logit({opt.logit_learning_rate}){logit_names} parameters."
+            f"SigCL model detected, setting up {opt.optimizer} optimizer for main({opt.learning_rate}) "
+            f"and {opt.logit_optimizer} for logit({opt.logit_learning_rate}){logit_names} parameters."
         )
-        # Create two optimizers with different learning rates
+        
+        # Create two optimizers with different types and learning rates
         optimizers = {
-            "main": optim.SGD(
+            "main": create_optimizer(
+                opt.optimizer,
                 other_params,
                 lr=opt.learning_rate,
                 momentum=opt.momentum,
                 weight_decay=opt.weight_decay,
             ),
-            "logit": optim.SGD(
+            "logit": create_optimizer(
+                opt.logit_optimizer,
                 logit_params,
-                lr=opt.logit_learning_rate,  # Lower learning rate for logit parameters
-                # momentum=0,
-                # weight_decay=0  # No weight decay for logit parameters
+                lr=opt.logit_learning_rate,
+                momentum=opt.momentum,
+                weight_decay=opt.weight_decay if opt.logit_optimizer != "sgd" else 0,
             ),
         }
         return optimizers
     else:
         # Original optimizer setup for non-SigCL models
-        return optim.SGD(
+        return create_optimizer(
+            opt.optimizer,
             model.parameters(),
             lr=opt.learning_rate,
             momentum=opt.momentum,
@@ -185,6 +220,8 @@ def run_linear_eval(ckpt_path, opt):
         str(opt.linear_epochs),  # Standard number of epochs for linear eval
         "--learning_rate",
         "5",  # Standard learning rate for linear eval
+        "--optimizer",
+        opt.optimizer,  # Pass the optimizer choice
         "--disable_progress",  # Disable progress to avoid cluttering logs
     ]
 
