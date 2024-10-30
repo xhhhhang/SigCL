@@ -184,15 +184,15 @@ def parse_option():
         opt.lr_decay_epochs.append(int(it))
 
     # Shorten method name (base/Avg/Sup), model name (just layer number), dataset name
-    method = opt.method.replace('SigCLBase', 'Dec').replace('SigCLBaseAvg', 'Avg').replace('SupCon', 'Sup')
-    model = opt.model.replace('resnet', '')
+    method = opt.method.replace('SigCLBaseAvg', 'Avg').replace('SigCLBase', 'Dec').replace('SupCon', 'Sup')
+    model = opt.model.replace('resnet', 'rs')
     dataset = opt.dataset.replace('cifar', 'cf')
-    opt.model_name = "{}_{}_{}_{}_{}_lr_{}_decay_{}_bsz_{}*{}_{}".format(
+    opt.model_name = "{}_{}_{}_{}_{}_lr_{}_wd_{}_bs_{}*{}_{}".format(
         method,
         dataset, 
         model,
-        opt.optimizer,
-        opt.linear_optimizer,
+        opt.optimizer[:3],
+        opt.linear_optimizer[:3],
         opt.learning_rate,
         opt.weight_decay,
         opt.batch_size,
