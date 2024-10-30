@@ -183,27 +183,27 @@ def parse_option():
     for it in iterations:
         opt.lr_decay_epochs.append(int(it))
 
-    opt.model_name = "{}_{}_{}_{}_{}_lr_{}_decay_{}_bsz_{}*{}_temp_{}_trial_{}".format(
-        opt.method,
-        opt.dataset,
-        opt.model,
+    # Shorten method name (base/Avg/Sup), model name (just layer number), dataset name
+    method = opt.method.replace('SigCLBase', 'Dec').replace('SigCLBaseAvg', 'Avg').replace('SupCon', 'Sup')
+    model = opt.model.replace('resnet', '')
+    dataset = opt.dataset.replace('cifar', 'cf')
+    opt.model_name = "{}_{}_{}_{}_{}_lr_{}_decay_{}_bsz_{}*{}_{}".format(
+        method,
+        dataset, 
+        model,
         opt.optimizer,
         opt.linear_optimizer,
         opt.learning_rate,
         opt.weight_decay,
         opt.batch_size,
         torch.cuda.device_count(),
-        opt.temp,
         opt.trial,
     )
 
-    if opt.cosine:
-        opt.model_name = f"{opt.model_name}_cosine"
-    if opt.method.startswith("SigCL"):
-        if opt.method.startswith("SigCLBase"):
-            opt.model_name = f"{opt.model_name}_base_{opt.neg_weight}"
-        else:
-            opt.model_name = f"{opt.model_name}_neg_{opt.max_neg_weight}"
+    if not opt.cosine:
+        opt.model_name = f"{opt.model_name}_nc"
+    if opt.method.startswith("SigCLBase"):
+        opt.model_name = f"{opt.model_name}_{int(opt.neg_weight)}"
 
     if opt.gather_loss:
         opt.model_name = f"{opt.model_name}_gather"
@@ -214,8 +214,10 @@ def parse_option():
     # warm-up for large-batch training,
     if opt.batch_size > 256:
         opt.warm = True
+    if not opt.warm:
+        opt.model_name = f"{opt.model_name}_nw"
+
     if opt.warm:
-        opt.model_name = f"{opt.model_name}_warm"
         opt.warmup_from = 0.01
         opt.warm_epochs = 10
         if opt.cosine:
