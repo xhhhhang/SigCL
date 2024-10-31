@@ -18,10 +18,21 @@ from util import (
     set_optimizer,
     warmup_learning_rate,
     load_imagenet_hf,
+    seed_everything,
 )
 
 # Import wandb and other necessary modules
 import wandb
+
+import torch.optim as optim
+
+
+def set_optimizer(opt, model):
+    optimizer = optim.SGD(model.parameters(),
+                          lr=opt.learning_rate,
+                          momentum=opt.momentum,
+                          weight_decay=opt.weight_decay)
+    return optimizer
 
 # Add this near the top of the file, after other imports
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
@@ -310,6 +321,7 @@ def validate(val_loader, model, criterion, opt):
 
 
 def main():
+    seed_everything()
     best_acc = 0
     opt = parse_option()
 
@@ -360,13 +372,13 @@ def main():
         if val_acc > best_acc:
             best_acc = val_acc
 
-        if epoch % opt.save_freq == 0:
-            save_file = os.path.join(opt.save_folder, f"ckpt_epoch_{epoch}.pth")
-            save_model(model, optimizer, opt, epoch, save_file)
+        # if epoch % opt.save_freq == 0:
+        #     save_file = os.path.join(opt.save_folder, f"ckpt_epoch_{epoch}.pth")
+        #     save_model(model, optimizer, opt, epoch, save_file)
 
-    # save the last model
-    save_file = os.path.join(opt.save_folder, "last.pth")
-    save_model(model, optimizer, opt, opt.epochs, save_file)
+    # # save the last model
+    # save_file = os.path.join(opt.save_folder, "last.pth")
+    # save_model(model, optimizer, opt, opt.epochs, save_file)
 
     print(f"best accuracy: {best_acc:.2f}")
 
