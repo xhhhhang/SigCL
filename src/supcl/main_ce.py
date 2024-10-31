@@ -77,6 +77,7 @@ def parse_option():
 
     # Add wandb logging option
     parser.add_argument("--log_wandb", action="store_true", help="log to wandb")
+    parser.add_argument("--eval_freq", type=int, default=10, help="evaluation frequency")
 
     opt = parser.parse_args()
 
@@ -196,6 +197,7 @@ def set_loader(opt):
         num_workers=opt.num_workers,
         pin_memory=True,
         sampler=train_sampler,
+        persistent_workers=True,
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=256, shuffle=False, num_workers=8, pin_memory=True
@@ -344,33 +346,26 @@ def main():
         time2 = time.time()
         print(f"epoch {epoch}, total time {time2 - time1:.2f}")
 
-        # Calculate gradient norm
-        total_norm = 0
-        for p in model.parameters():
-            if p.grad is not None:
-                param_norm = p.grad.data.norm(2)
-                total_norm += param_norm.item() ** 2
-        total_norm = total_norm**0.5
-
+        log_dict = {
+            "epoch": epoch,
+            "train_loss": loss,
+            "train_acc": train_acc,
+            "learning_rate": optimizer.param_groups[0]["lr"],
+        }
         # evaluation
-        loss, val_acc = validate(val_loader, model, criterion, opt)
+        if epoch % opt.eval_freq == 0:
+            loss, val_acc = validate(val_loader, model, criterion, opt)
+            log_dict.update({
+                "val_loss": loss,
+                "val_acc": val_acc,
+            })
+
+            if val_acc > best_acc:
+                best_acc = val_acc
 
         # log to wandb
         if opt.log_wandb:
-            wandb.log(
-                {
-                    "epoch": epoch,
-                    "train_loss": loss,
-                    "train_acc": train_acc,
-                    "val_loss": loss,
-                    "val_acc": val_acc,
-                    "learning_rate": optimizer.param_groups[0]["lr"],
-                    "grad_norm": total_norm,
-                }
-            )
-
-        if val_acc > best_acc:
-            best_acc = val_acc
+            wandb.log(log_dict)
 
         # if epoch % opt.save_freq == 0:
         #     save_file = os.path.join(opt.save_folder, f"ckpt_epoch_{epoch}.pth")
