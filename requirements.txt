@@ -33,7 +33,7 @@ rich==13.9.3
 rootutils==1.0.7
 safetensors==0.4.5
 scikit_learn==1.5.2
-setuptools==75.1.0
+setuptools==75.6.0
 sh==2.1.0
 six==1.16.0
 timm==1.0.11
